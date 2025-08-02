@@ -1,0 +1,32 @@
+# docker-compose.yml
+version: '3.8'
+
+services:
+  app:
+    build: .
+    ports:
+      - "5000:5000"
+    environment:
+      - NODE_ENV=production
+      - MONGODB_URI=mongodb://mongo:27017/burmechat
+    depends_on:
+      - mongo
+      - redis
+
+  mongo:
+    image: mongo:5.0
+    volumes:
+      - mongo-data:/data/db
+    ports:
+      - "27017:27017"
+
+  redis:
+    image: redis:6.2
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+
+volumes:
+  mongo-data:
+  redis-data:
