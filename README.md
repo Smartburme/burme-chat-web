@@ -41,559 +41,558 @@ burme-chat/
 ├── .gitignore
 └── README.md
 ```
+ဆက်လက်၍ project structure ထဲက ကျန်ရှိနေသေးသော အရေးကြီးသည့် အပိုင်းများကို ဖြည့်စွက်ရေးသားပေးပါမည်။
 
-ဆက်လက်၍ ကျန်ရှိနေသော အရေးကြီးသည့် အပိုင်းများကို ဖြည့်စွက်ရေးသားပေးပါမည်။
+## 26. Video Call Feature (WebRTC Implementation)
 
-## 16. Admin Dashboard Components (client/src/components/admin/)
-
-### AdminPanel.jsx
+### client/src/components/call/VideoCall.jsx
 ```javascript
-import { useState, useEffect } from 'react';
-import { Tabs, Table, Tag, Button, message } from 'antd';
-import api from '../../services/api';
+import { useState, useEffect, useRef } from 'react';
+import { Button, Modal, message } from 'antd';
+import { PhoneOutlined, CloseOutlined } from '@ant-design/icons';
+import socket from '../../services/socketService';
 
-const { TabPane } = Tabs;
-
-const AdminPanel = () => {
-  const [users, setUsers] = useState([]);
-  const [reports, setReports] = useState([]);
-  const [loading, setLoading] = useState(false);
+const VideoCall = ({ callId, onEndCall }) => {
+  const [isCallActive, setIsCallActive] = useState(false);
+  const [remoteStream, setRemoteStream] = useState(null);
+  const localVideoRef = useRef();
+  const remoteVideoRef = useRef();
+  const peerConnection = useRef();
 
   useEffect(() => {
-    fetchData();
-  }, []);
+    if (!callId) return;
 
-  const fetchData = async () => {
+    const setupWebRTC = async () => {
+      try {
+        // Get local stream
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: true,
+          audio: true
+        });
+        localVideoRef.current.srcObject = stream;
+
+        // Create peer connection
+        peerConnection.current = new RTCPeerConnection({
+          iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+        });
+
+        // Add local stream to connection
+        stream.getTracks().forEach(track => {
+          peerConnection.current.addTrack(track, stream);
+        });
+
+        // Handle remote stream
+        peerConnection.current.ontrack = (event) => {
+          setRemoteStream(event.streams[0]);
+          remoteVideoRef.current.srcObject = event.streams[0];
+          setIsCallActive(true);
+        };
+
+        // Handle ICE candidates
+        peerConnection.current.onicecandidate = (event) => {
+          if (event.candidate) {
+            socket.emit('call-signal', {
+              callId,
+              type: 'candidate',
+              data: event.candidate
+            });
+          }
+        };
+
+        // Listen for signals
+        socket.on('call-signal', handleSignal);
+
+      } catch (err) {
+        message.error('Failed to start call: ' + err.message);
+        onEndCall();
+      }
+    };
+
+    setupWebRTC();
+
+    return () => {
+      if (peerConnection.current) {
+        peerConnection.current.close();
+      }
+      socket.off('call-signal', handleSignal);
+    };
+  }, [callId]);
+
+  const handleSignal = async ({ type, data }) => {
     try {
-      setLoading(true);
-      const [usersRes, reportsRes] = await Promise.all([
-        api.get('/admin/users'),
-        api.get('/admin/reports')
-      ]);
-      setUsers(usersRes.data);
-      setReports(reportsRes.data);
+      if (type === 'offer') {
+        await peerConnection.current.setRemoteDescription(data);
+        const answer = await peerConnection.current.createAnswer();
+        await peerConnection.current.setLocalDescription(answer);
+        
+        socket.emit('call-signal', {
+          callId,
+          type: 'answer',
+          data: answer
+        });
+      } 
+      else if (type === 'answer') {
+        await peerConnection.current.setRemoteDescription(data);
+      } 
+      else if (type === 'candidate') {
+        await peerConnection.current.addIceCandidate(data);
+      }
     } catch (err) {
-      message.error('Failed to fetch data');
-    } finally {
-      setLoading(false);
+      console.error('Signal handling error:', err);
     }
   };
 
-  const handleBanUser = async (userId) => {
-    try {
-      await api.patch(`/admin/users/${userId}/ban`);
-      message.success('User banned successfully');
-      fetchData();
-    } catch (err) {
-      message.error('Failed to ban user');
+  const endCall = () => {
+    if (peerConnection.current) {
+      peerConnection.current.close();
     }
+    onEndCall();
   };
-
-  const userColumns = [
-    {
-      title: 'Name',
-      dataIndex: 'name',
-      key: 'name'
-    },
-    {
-      title: 'Email',
-      dataIndex: 'email',
-      key: 'email'
-    },
-    {
-      title: 'Status',
-      key: 'status',
-      render: (_, record) => (
-        <Tag color={record.isBanned ? 'red' : 'green'}>
-          {record.isBanned ? 'Banned' : 'Active'}
-        </Tag>
-      )
-    },
-    {
-      title: 'Action',
-      key: 'action',
-      render: (_, record) => (
-        <Button 
-          danger 
-          onClick={() => handleBanUser(record._id)}
-          disabled={record.isBanned}
-        >
-          Ban
-        </Button>
-      )
-    }
-  ];
-
-  const reportColumns = [
-    {
-      title: 'Reported User',
-      dataIndex: ['reportedUser', 'name'],
-      key: 'reportedUser'
-    },
-    {
-      title: 'Reason',
-      dataIndex: 'reason',
-      key: 'reason'
-    },
-    {
-      title: 'Status',
-      dataIndex: 'status',
-      key: 'status'
-    }
-  ];
 
   return (
-    <div className="admin-panel">
-      <Tabs defaultActiveKey="1">
-        <TabPane tab="User Management" key="1">
-          <Table 
-            columns={userColumns} 
-            dataSource={users} 
-            loading={loading}
-            rowKey="_id"
+    <Modal
+      visible={!!callId}
+      footer={null}
+      closable={false}
+      width={800}
+      centered
+    >
+      <div className="video-call-container">
+        <div className="remote-video">
+          {remoteStream ? (
+            <video ref={remoteVideoRef} autoPlay playsInline />
+          ) : (
+            <div className="waiting-message">Connecting...</div>
+          )}
+        </div>
+        
+        <div className="local-video">
+          <video ref={localVideoRef} autoPlay playsInline muted />
+        </div>
+
+        <div className="call-controls">
+          <Button 
+            type="primary" 
+            danger 
+            icon={<CloseOutlined />}
+            onClick={endCall}
+            size="large"
           />
-        </TabPane>
-        <TabPane tab="Report Management" key="2">
-          <Table 
-            columns={reportColumns} 
-            dataSource={reports} 
-            loading={loading}
-            rowKey="_id"
-          />
-        </TabPane>
-      </Tabs>
-    </div>
+        </div>
+      </div>
+    </Modal>
   );
 };
 
-export default AdminPanel;
+export default VideoCall;
 ```
 
-## 17. User Blocking System (server/models/Block.js)
+## 27. Push Notification Service (server/services/pushNotification.js)
+
+```javascript
+const webpush = require('web-push');
+const User = require('../models/User');
+
+// Configure VAPID keys
+webpush.setVapidDetails(
+  `mailto:${process.env.VAPID_EMAIL}`,
+  process.env.VAPID_PUBLIC_KEY,
+  process.env.VAPID_PRIVATE_KEY
+);
+
+exports.sendPushNotification = async (userId, payload) => {
+  try {
+    const user = await User.findById(userId).select('pushSubscriptions');
+    
+    if (!user || !user.pushSubscriptions || user.pushSubscriptions.length === 0) {
+      return;
+    }
+
+    const notificationPromises = user.pushSubscriptions.map(subscription => {
+      return webpush.sendNotification(
+        JSON.parse(subscription),
+        JSON.stringify(payload)
+      ).catch(err => {
+        if (err.statusCode === 410) {
+          // Remove expired subscription
+          user.pushSubscriptions = user.pushSubscriptions.filter(
+            sub => sub !== subscription
+          );
+          return user.save();
+        }
+        console.error('Push notification failed:', err);
+      });
+    });
+
+    await Promise.all(notificationPromises);
+  } catch (err) {
+    console.error('Push notification error:', err);
+  }
+};
+```
+
+## 28. Message Read Receipts (server/models/MessageRead.js)
 
 ```javascript
 const mongoose = require('mongoose');
 
-const blockSchema = new mongoose.Schema({
-  blocker: {
+const messageReadSchema = new mongoose.Schema({
+  message: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Message',
+    required: true
+  },
+  user: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
     required: true
   },
-  blocked: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
-    required: true
-  },
-  reason: {
-    type: String,
-    trim: true
-  },
-  createdAt: {
+  readAt: {
     type: Date,
     default: Date.now
   }
 });
 
-// Prevent duplicate blocks
-blockSchema.index({ blocker: 1, blocked: 1 }, { unique: true });
+// Ensure one read record per message-user pair
+messageReadSchema.index({ message: 1, user: 1 }, { unique: true });
 
-module.exports = mongoose.model('Block', blockSchema);
+module.exports = mongoose.model('MessageRead', messageReadSchema);
 ```
 
-## 18. Message Encryption Middleware (server/middlewares/encryption.js)
+## 29. Typing Indicators (client/src/components/chat/TypingIndicator.jsx)
 
 ```javascript
-const crypto = require('crypto');
-const AppError = require('../utils/appError');
+import { useEffect, useState } from 'react';
+import { Badge } from 'antd';
+import socket from '../../services/socketService';
 
-const algorithm = 'aes-256-cbc';
-const key = crypto.scryptSync(process.env.ENCRYPTION_KEY, 'salt', 32);
-const iv = Buffer.alloc(16, 0);
+const TypingIndicator = ({ roomId, currentUserId }) => {
+  const [typingUsers, setTypingUsers] = useState([]);
 
-exports.encryptMessage = (text) => {
-  try {
-    const cipher = crypto.createCipheriv(algorithm, key, iv);
-    let encrypted = cipher.update(text, 'utf8', 'hex');
-    encrypted += cipher.final('hex');
-    return encrypted;
-  } catch (err) {
-    throw new AppError('Message encryption failed', 500);
-  }
+  useEffect(() => {
+    const handleTyping = (data) => {
+      if (data.roomId === roomId && data.userId !== currentUserId) {
+        setTypingUsers(prev => {
+          const exists = prev.some(u => u.userId === data.userId);
+          return exists ? prev : [...prev, { userId: data.userId, name: data.name }];
+        });
+
+        // Remove user after 3 seconds
+        setTimeout(() => {
+          setTypingUsers(prev => prev.filter(u => u.userId !== data.userId));
+        }, 3000);
+      }
+    };
+
+    socket.on('user-typing', handleTyping);
+
+    return () => {
+      socket.off('user-typing', handleTyping);
+    };
+  }, [roomId, currentUserId]);
+
+  if (typingUsers.length === 0) return null;
+
+  return (
+    <div className="typing-indicator">
+      <Badge status="processing" />
+      <span>
+        {typingUsers.map(u => u.name).join(', ')} 
+        {typingUsers.length === 1 ? ' is ' : ' are '}
+        typing...
+      </span>
+    </div>
+  );
 };
 
-exports.decryptMessage = (encryptedText) => {
-  try {
-    const decipher = crypto.createDecipheriv(algorithm, key, iv);
-    let decrypted = decipher.update(encryptedText, 'hex', 'utf8');
-    decrypted += decipher.final('utf8');
-    return decrypted;
-  } catch (err) {
-    throw new AppError('Message decryption failed', 500);
-  }
-};
+export default TypingIndicator;
 ```
 
-## 19. Message Queue for Notifications (server/services/queueService.js)
-
-```javascript
-const Queue = require('bull');
-const Notification = require('../models/Notification');
-const socketService = require('./socketService');
-
-const notificationQueue = new Queue('notifications', {
-  redis: {
-    host: process.env.REDIS_HOST,
-    port: process.env.REDIS_PORT
-  }
-});
-
-notificationQueue.process(async (job) => {
-  const { userId, type, content, relatedUser, relatedChat } = job.data;
-  
-  try {
-    const notification = await Notification.create({
-      user: userId,
-      type,
-      content,
-      relatedUser,
-      relatedChat
-    });
-
-    // Emit real-time notification
-    const io = socketService.getIO();
-    io.to(userId.toString()).emit('newNotification', notification);
-
-    return notification;
-  } catch (err) {
-    console.error('Notification processing failed:', err);
-    throw err;
-  }
-});
-
-module.exports = notificationQueue;
-```
-
-## 20. User Status Tracker (server/services/userStatus.js)
+## 30. Data Analytics Dashboard (server/controllers/analyticsController.js)
 
 ```javascript
 const User = require('../models/User');
-const socketService = require('./socketService');
+const Message = require('../models/Message');
+const ChatRoom = require('../models/ChatRoom');
 
-const onlineUsers = new Map();
-
-const updateUserStatus = async (userId, isOnline) => {
+exports.getPlatformStats = async (req, res) => {
   try {
-    // Update in database
-    await User.findByIdAndUpdate(userId, {
-      lastActive: new Date(),
-      isOnline
-    });
+    const [userCount, activeUserCount, messageCount, roomCount] = await Promise.all([
+      User.countDocuments(),
+      User.countDocuments({ lastActive: { $gt: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) }),
+      Message.countDocuments(),
+      ChatRoom.countDocuments()
+    ]);
 
-    // Update in memory map
-    if (isOnline) {
-      onlineUsers.set(userId.toString(), true);
-    } else {
-      onlineUsers.delete(userId.toString());
-    }
-
-    // Broadcast status change to friends
-    const user = await User.findById(userId).select('friends');
-    const io = socketService.getIO();
-    
-    user.friends.forEach(friendId => {
-      io.to(friendId.toString()).emit('friendStatusChange', {
-        userId,
-        isOnline
-      });
-    });
-  } catch (err) {
-    console.error('Status update failed:', err);
-  }
-};
-
-const checkUserStatus = (userId) => {
-  return onlineUsers.has(userId.toString());
-};
-
-module.exports = {
-  updateUserStatus,
-  checkUserStatus
-};
-```
-
-## 21. Chat Message Reactions (client/src/components/chat/MessageReactions.jsx)
-
-```javascript
-import { useState } from 'react';
-import { Popover, Button, Space, Badge } from 'antd';
-import { SmileOutlined } from '@ant-design/icons';
-import api from '../../services/api';
-
-const reactions = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
-
-const MessageReactions = ({ messageId, initialReactions }) => {
-  const [reactionsData, setReactionsData] = useState(initialReactions || {});
-  const [loading, setLoading] = useState(false);
-
-  const handleReaction = async (emoji) => {
-    try {
-      setLoading(true);
-      const response = await api.post(`/messages/${messageId}/react`, { emoji });
-      setReactionsData(response.data.reactions);
-    } catch (err) {
-      console.error('Failed to add reaction:', err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const reactionContent = (
-    <Space size="small">
-      {reactions.map(emoji => (
-        <Button 
-          key={emoji} 
-          type="text" 
-          onClick={() => handleReaction(emoji)}
-          disabled={loading}
-        >
-          {emoji}
-        </Button>
-      ))}
-    </Space>
-  );
-
-  const totalReactions = Object.values(reactionsData).reduce((sum, count) => sum + count, 0);
-
-  return (
-    <Popover content={reactionContent} trigger="click">
-      <Badge count={totalReactions}>
-        <Button 
-          type="text" 
-          icon={<SmileOutlined />} 
-          size="small"
-        />
-      </Badge>
-    </Popover>
-  );
-};
-
-export default MessageReactions;
-```
-
-## 22. Data Backup Script (server/scripts/backup.js)
-
-```javascript
-const mongoose = require('mongoose');
-const fs = require('fs');
-const path = require('path');
-const { promisify } = require('util');
-const writeFile = promisify(fs.writeFile);
-const readdir = promisify(fs.readdir);
-const unlink = promisify(fs.unlink);
-const { exec } = require('child_process');
-const { DB_NAME } = require('../../config');
-
-const backupDir = path.join(__dirname, '../../backups');
-
-const backupDatabase = async () => {
-  try {
-    // Create backup directory if not exists
-    if (!fs.existsSync(backupDir)) {
-      fs.mkdirSync(backupDir, { recursive: true });
-    }
-
-    // Clean up old backups (keep last 7)
-    const files = await readdir(backupDir);
-    if (files.length >= 7) {
-      const oldestFile = files.sort()[0];
-      await unlink(path.join(backupDir, oldestFile));
-    }
-
-    // Create new backup
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const backupFile = path.join(backupDir, `backup-${timestamp}.gz`);
-
-    await new Promise((resolve, reject) => {
-      exec(`mongodump --db=${DB_NAME} --archive=${backupFile} --gzip`, 
-        (error, stdout, stderr) => {
-          if (error) {
-            console.error('Backup failed:', stderr);
-            return reject(error);
-          }
-          console.log('Backup successful:', stdout);
-          resolve();
+    const messagesByDay = await Message.aggregate([
+      {
+        $group: {
+          _id: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } },
+          count: { $sum: 1 }
         }
-      );
-    });
+      },
+      { $sort: { "_id": 1 } },
+      { $limit: 7 }
+    ]);
 
-    return backupFile;
+    res.status(200).json({
+      status: 'success',
+      data: {
+        userCount,
+        activeUserCount,
+        messageCount,
+        roomCount,
+        messagesByDay
+      }
+    });
   } catch (err) {
-    console.error('Backup process failed:', err);
-    throw err;
+    res.status(500).json({
+      status: 'error',
+      message: 'Failed to fetch analytics data'
+    });
   }
 };
-
-module.exports = backupDatabase;
 ```
 
-## 23. Rate Limiting Middleware (server/middlewares/rateLimit.js)
+## 31. Scheduled Tasks (server/services/scheduler.js)
 
 ```javascript
-const rateLimit = require('express-rate-limit');
+const cron = require('node-cron');
+const User = require('../models/User');
+const backupDatabase = require('./backup');
+const analyticsService = require('./analyticsService');
+
+// Daily backup at 2 AM
+cron.schedule('0 2 * * *', () => {
+  console.log('Running daily database backup...');
+  backupDatabase().catch(console.error);
+});
+
+// Weekly analytics report every Monday at 3 AM
+cron.schedule('0 3 * * 1', () => {
+  console.log('Generating weekly analytics report...');
+  analyticsService.generateWeeklyReport().catch(console.error);
+});
+
+// Monthly inactive user cleanup on the 1st at 4 AM
+cron.schedule('0 4 1 * *', async () => {
+  console.log('Cleaning up inactive users...');
+  try {
+    const cutoffDate = new Date();
+    cutoffDate.setMonth(cutoffDate.getMonth() - 6); // 6 months inactive
+    
+    const result = await User.deleteMany({
+      lastActive: { $lt: cutoffDate },
+      isAdmin: { $ne: true }
+    });
+    
+    console.log(`Removed ${result.deletedCount} inactive users`);
+  } catch (err) {
+    console.error('Inactive user cleanup failed:', err);
+  }
+});
+```
+
+## 32. Content Moderation Middleware (server/middlewares/contentModeration.js)
+
+```javascript
+const axios = require('axios');
 const AppError = require('../utils/appError');
 
-const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 10, // limit each IP to 10 requests per windowMs
-  message: 'Too many login attempts from this IP, please try again later',
-  handler: (req, res, next) => {
-    next(new AppError('Too many requests from this IP', 429));
+exports.moderateContent = async (req, res, next) => {
+  if (!req.body.text) return next();
+  
+  try {
+    const response = await axios.post(process.env.MODERATION_API_URL, {
+      text: req.body.text
+    }, {
+      headers: {
+        'Authorization': `Bearer ${process.env.MODERATION_API_KEY}`
+      }
+    });
+
+    if (response.data.isToxic) {
+      return next(new AppError('Your message contains inappropriate content', 400));
+    }
+
+    next();
+  } catch (err) {
+    console.error('Content moderation failed:', err);
+    next(); // Allow to proceed if moderation service fails
   }
-});
-
-const apiLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000, // 1 hour
-  max: 1000, // limit each IP to 1000 requests per hour
-  message: 'Too many requests from this IP, please try again later'
-});
-
-const strictLimiter = rateLimit({
-  windowMs: 5 * 60 * 1000, // 5 minutes
-  max: 100, // limit each IP to 100 requests per windowMs
-  message: 'Too many requests from this IP, please try again later'
-});
-
-module.exports = {
-  authLimiter,
-  apiLimiter,
-  strictLimiter
 };
 ```
 
-## 24. User Search Component (client/src/components/friends/UserSearch.jsx)
+## 33. Chat Message Pinning (client/src/components/chat/PinnedMessages.jsx)
 
 ```javascript
 import { useState, useEffect } from 'react';
-import { Input, List, Avatar, Empty } from 'antd';
-import { SearchOutlined } from '@ant-design/icons';
+import { List, Button, Popconfirm, message } from 'antd';
+import { PushpinOutlined } from '@ant-design/icons';
 import api from '../../services/api';
 
-const UserSearch = ({ onSelectUser }) => {
-  const [query, setQuery] = useState('');
-  const [results, setResults] = useState([]);
+const PinnedMessages = ({ roomId }) => {
+  const [pinnedMessages, setPinnedMessages] = useState([]);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    const searchUsers = async () => {
-      if (query.trim().length < 2) {
-        setResults([]);
-        return;
-      }
-
+    const fetchPinnedMessages = async () => {
       try {
         setLoading(true);
-        const response = await api.get(`/users/search?q=${query}`);
-        setResults(response.data);
+        const response = await api.get(`/chat/rooms/${roomId}/pinned-messages`);
+        setPinnedMessages(response.data);
       } catch (err) {
-        console.error('Search failed:', err);
+        message.error('Failed to load pinned messages');
       } finally {
         setLoading(false);
       }
     };
 
-    const timer = setTimeout(searchUsers, 500);
-    return () => clearTimeout(timer);
-  }, [query]);
+    fetchPinnedMessages();
+  }, [roomId]);
+
+  const handleUnpin = async (messageId) => {
+    try {
+      await api.delete(`/chat/messages/${messageId}/pin`);
+      setPinnedMessages(prev => prev.filter(msg => msg._id !== messageId));
+      message.success('Message unpinned');
+    } catch (err) {
+      message.error('Failed to unpin message');
+    }
+  };
 
   return (
-    <div className="user-search">
-      <Input
-        placeholder="Search users..."
-        prefix={<SearchOutlined />}
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        allowClear
+    <div className="pinned-messages">
+      <h3>
+        <PushpinOutlined /> Pinned Messages
+      </h3>
+      
+      <List
+        loading={loading}
+        dataSource={pinnedMessages}
+        renderItem={item => (
+          <List.Item
+            actions={[
+              <Popconfirm
+                title="Are you sure to unpin this message?"
+                onConfirm={() => handleUnpin(item._id)}
+                okText="Yes"
+                cancelText="No"
+              >
+                <Button type="text" danger size="small">Unpin</Button>
+              </Popconfirm>
+            ]}
+          >
+            <List.Item.Meta
+              description={
+                <>
+                  <div className="message-text">{item.text}</div>
+                  <div className="message-meta">
+                    {item.sender.name} • {new Date(item.createdAt).toLocaleString()}
+                  </div>
+                </>
+              }
+            />
+          </List.Item>
+        )}
       />
-
-      {results.length > 0 ? (
-        <List
-          className="search-results"
-          dataSource={results}
-          loading={loading}
-          renderItem={(user) => (
-            <List.Item 
-              onClick={() => onSelectUser(user)}
-              style={{ cursor: 'pointer' }}
-            >
-              <List.Item.Meta
-                avatar={<Avatar src={user.profilePicture} />}
-                title={user.name}
-                description={user.email}
-              />
-            </List.Item>
-          )}
-        />
-      ) : query.trim().length >= 2 && !loading ? (
-        <Empty description="No users found" />
-      ) : null}
     </div>
   );
 };
 
-export default UserSearch;
+export default PinnedMessages;
 ```
 
-## 25. Automated Testing (client/src/tests/)
+## 34. User Presence Status (client/src/components/common/UserStatus.jsx)
 
-### chatService.test.js
 ```javascript
-import { sendMessage, getChatHistory } from '../services/chatService';
-import api from '../services/api';
+import { Badge, Tooltip } from 'antd';
+import { useEffect, useState } from 'react';
+import socket from '../../services/socketService';
 
-jest.mock('../services/api');
+const UserStatus = ({ userId, lastActive }) => {
+  const [isOnline, setIsOnline] = useState(false);
 
-describe('Chat Service', () => {
-  beforeEach(() => {
-    jest.clearAllMocks();
-  });
+  useEffect(() => {
+    // Initial check
+    const checkStatus = () => {
+      const minutesSinceLastActive = (Date.now() - new Date(lastActive).getTime()) / (1000 * 60);
+      setIsOnline(minutesSinceLastActive < 5); // Consider online if active in last 5 minutes
+    };
 
-  describe('sendMessage', () => {
-    it('should send message successfully', async () => {
-      const mockResponse = { data: { success: true } };
-      api.post.mockResolvedValue(mockResponse);
+    checkStatus();
 
-      const result = await sendMessage('room123', 'Hello world!');
-      
-      expect(api.post).toHaveBeenCalledWith('/chat/messages', {
-        roomId: 'room123',
-        text: 'Hello world!'
-      });
-      expect(result).toEqual(mockResponse.data);
+    // Listen for real-time updates
+    socket.on('friendStatusChange', (data) => {
+      if (data.userId === userId) {
+        setIsOnline(data.isOnline);
+      }
     });
 
-    it('should handle send message failure', async () => {
-      const mockError = new Error('Network error');
-      api.post.mockRejectedValue(mockError);
+    return () => {
+      socket.off('friendStatusChange');
+    };
+  }, [userId, lastActive]);
 
-      await expect(sendMessage('room123', 'Hello'))
-        .rejects
-        .toThrow('Network error');
-    });
-  });
+  const getStatusTooltip = () => {
+    if (isOnline) return 'Online now';
+    return `Last seen ${new Date(lastActive).toLocaleString()}`;
+  };
 
-  describe('getChatHistory', () => {
-    it('should fetch chat history', async () => {
-      const mockMessages = [{ id: 1, text: 'Hi' }];
-      api.get.mockResolvedValue({ data: { messages: mockMessages } });
+  return (
+    <Tooltip title={getStatusTooltip()}>
+      <Badge 
+        status={isOnline ? 'success' : 'default'} 
+        className="user-status-badge"
+      />
+    </Tooltip>
+  );
+};
 
-      const result = await getChatHistory('room123');
-      
-      expect(api.get).toHaveBeenCalledWith('/chat/rooms/room123/messages');
-      expect(result).toEqual(mockMessages);
-    });
-  });
-});
+export default UserStatus;
 ```
 
-ဤအပိုင်းများသည် သင့် Burme Chat application အတွက် အဆင့်မြင့် feature များနှင့် လုံခြုံရေး၊ စွမ်းဆောင်ရည်မြှင့်တင်မှုများကို ဖြည့်စွက်ပေးထားပါသည်။ လိုအပ်ပါက နောက်ထပ် အသေးစိတ်ရှင်းလင်းချက်များ သို့မဟုတ် အခြားသော feature များအတွက် ဆက်လက်မေးမြန်းနိုင်ပါသည်။
+## 35. Chat Message Search (server/controllers/messageSearchController.js)
+
+```javascript
+const Message = require('../models/Message');
+const escapeStringRegexp = require('escape-string-regexp');
+
+exports.searchMessages = async (req, res) => {
+  try {
+    const { roomId, query } = req.query;
+    
+    if (!roomId || !query) {
+      return res.status(400).json({
+        status: 'fail',
+        message: 'Room ID and search query are required'
+      });
+    }
+
+    const searchRegex = new RegExp(escapeStringRegexp(query), 'i');
+    
+    const messages = await Message.find({
+      room: roomId,
+      text: searchRegex
+    })
+    .populate('sender', 'name profilePicture')
+    .sort('-createdAt')
+    .limit(50);
+
+    res.status(200).json({
+      status: 'success',
+      results: messages.length,
+      data: {
+        messages
+      }
+    });
+  } catch (err) {
+    res.status(500).json({
+      status: 'error',
+      message: 'Failed to search messages'
+    });
+  }
+};
+```
+
+ဤအပိုင်းများသည် သင့် Burme Chat application အတွက် အဆင့်မြင့် feature များနှင့် လိုအပ်သော utility များကို ဖြည့်စွက်ပေးထားပါသည်။ လိုအပ်ပါက နောက်ထပ် feature များ သို့မဟုတ် အသေးစိတ်ရှင်းလင်းချက်များအတွက် ဆက်လက်မေးမြန်းနိုင်ပါသည်။
