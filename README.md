@@ -1,134 +1,306 @@
-# Burme Chat Website Project Structure
+ကျေးဇူးပြု၍ project structure ထဲက ကျန်ရှိနေသော အရေးကြီးသည့် code အပိုင်းများကို ဆက်လက်ရေးသားပေးပါမည်။
 
-Here's a comprehensive project structure and code outline for your Burme Chat website with social media, GPS-based friend finding, chat rooms, and multi-language support.
+## 1. API Routes (server/routes/)
 
-## Project Structure
-
-```
-burme-chat/
-├── client/
-│   ├── public/
-│   ├── src/
-│   │   ├── assets/
-│   │   ├── components/
-│   │   │   ├── auth/
-│   │   │   ├── chat/
-│   │   │   ├── friends/
-│   │   │   ├── profile/
-│   │   │   └── ui/
-│   │   ├── contexts/
-│   │   ├── hooks/
-│   │   ├── pages/
-│   │   │   ├── Auth/
-│   │   │   ├── Chat/
-│   │   │   ├── Friends/
-│   │   │   ├── Profile/
-│   │   │   └── Settings/
-│   │   ├── services/
-│   │   ├── store/
-│   │   ├── translations/
-│   │   ├── utils/
-│   │   ├── App.jsx
-│   │   └── main.jsx
-│   └── package.json
-├── server/
-│   ├── config/
-│   ├── controllers/
-│   ├── middlewares/
-│   ├── models/
-│   ├── routes/
-│   ├── services/
-│   ├── utils/
-│   ├── app.js
-│   └── package.json
-├── .gitignore
-└── README.md
-```
-
-## Key Code Implementation
-
-### 1. Multi-language Support (i18n)
-
-`client/src/utils/i18n.js`:
+### authRoutes.js
 ```javascript
-import i18n from 'i18next';
-import { initReactI18next } from 'react-i18next';
+const express = require('express');
+const router = express.Router();
+const authController = require('../controllers/authController');
 
-const resources = {
-  en: {
-    translation: {
-      welcome: "Welcome to Burme Chat",
-      login: "Login",
-      // ... other English translations
-    }
-  },
-  my: {
-    translation: {
-      welcome: "Burme Chat မှကြိုဆိုပါသည်",
-      login: "လော့ဂ်အင်",
-      // ... other Burmese translations
-    }
-  },
-  thi: {
-    translation: {
-      welcome: "ยินดีต้อนรับสู่ Burme Chat",
-      login: "เข้าสู่ระบบ",
-      // ... other Thai translations
-    }
-  },
-  vnd: {
-    translation: {
-      welcome: "Chào mừng đến với Burme Chat",
-      login: "Đăng nhập",
-      // ... other Vietnamese translations
-    }
+router.post('/register', authController.register);
+router.post('/login', authController.login);
+router.get('/logout', authController.protect, authController.logout);
+router.post('/forgot-password', authController.forgotPassword);
+router.patch('/reset-password/:token', authController.resetPassword);
+
+module.exports = router;
+```
+
+### userRoutes.js
+```javascript
+const express = require('express');
+const router = express.Router();
+const userController = require('../controllers/userController');
+const authController = require('../controllers/authController');
+
+router.use(authController.protect);
+
+router.get('/me', userController.getMe);
+router.patch('/update-me', userController.updateMe);
+router.patch('/update-password', authController.updatePassword);
+router.get('/nearby', userController.getNearbyUsers);
+router.post('/friends/:friendId', userController.addFriend);
+router.delete('/friends/:friendId', userController.removeFriend);
+
+module.exports = router;
+```
+
+## 2. Controller Files (server/controllers/)
+
+### authController.js
+```javascript
+const User = require('../models/User');
+const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
+
+exports.register = async (req, res) => {
+  try {
+    const { name, email, password } = req.body;
+    
+    const newUser = await User.create({
+      name,
+      email,
+      password,
+      location: {
+        type: 'Point',
+        coordinates: [req.body.longitude, req.body.latitude]
+      }
+    });
+
+    const token = generateToken(newUser._id);
+
+    res.status(201).json({
+      status: 'success',
+      token,
+      data: {
+        user: newUser
+      }
+    });
+  } catch (err) {
+    res.status(400).json({
+      status: 'fail',
+      message: err.message
+    });
   }
 };
 
-i18n
-  .use(initReactI18next)
-  .init({
-    resources,
-    lng: localStorage.getItem('language') || 'en',
-    fallbackLng: 'en',
-    interpolation: {
-      escapeValue: false
-    }
+function generateToken(userId) {
+  return jwt.sign({ id: userId }, process.env.JWT_SECRET, {
+    expiresIn: process.env.JWT_EXPIRES_IN
   });
-
-export default i18n;
+}
 ```
 
-### 2. GPS-based Friend Finder
+## 3. Client-side Services (client/src/services/)
 
-`client/src/components/friends/NearbyFriends.jsx`:
+### authService.js
 ```javascript
-import { useState, useEffect } from 'react';
-import { useTranslation } from 'react-i18next';
-import { getNearbyUsers } from '../../services/friendService';
+import axios from 'axios';
 
-const NearbyFriends = () => {
-  const { t } = useTranslation();
-  const [nearbyUsers, setNearbyUsers] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [radius, setRadius] = useState(5); // default 5km radius
+const API_URL = '/api/v1/auth';
+
+const register = async (userData) => {
+  const response = await axios.post(`${API_URL}/register`, userData);
+  if (response.data.token) {
+    localStorage.setItem('token', response.data.token);
+  }
+  return response.data;
+};
+
+const login = async (credentials) => {
+  const response = await axios.post(`${API_URL}/login`, credentials);
+  if (response.data.token) {
+    localStorage.setItem('token', response.data.token);
+  }
+  return response.data;
+};
+
+const logout = () => {
+  localStorage.removeItem('token');
+};
+
+export default {
+  register,
+  login,
+  logout
+};
+```
+
+## 4. React Context (client/src/contexts/)
+
+### AuthContext.jsx
+```javascript
+import { createContext, useState, useEffect } from 'react';
+import authService from '../services/authService';
+
+export const AuthContext = createContext();
+
+export const AuthProvider = ({ children }) => {
+  const [user, setUser] = useState(null);
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    const fetchNearbyUsers = async () => {
-      try {
-        if (!navigator.geolocation) {
-          throw new Error(t('geolocation_not_supported'));
-        }
+    const loadUser = async () => {
+      const token = localStorage.getItem('token');
+      if (!token) {
+        setIsLoading(false);
+        return;
+      }
 
-        navigator.geolocation.getCurrentPosition(
-          async (position) => {
-            const { latitude, longitude } = position.coords;
-            const users = await getNearbyUsers(latitude, longitude, radius);
-            setNearbyUsers(users);
-            setLoading(false);
-          },
-          (err) => {
+      try {
+        const response = await axios.get('/api/v1/users/me', {
+          headers: {
+            Authorization: `Bearer ${token}`
+          }
+        });
+        setUser(response.data.data.user);
+      } catch (err) {
+        console.error(err);
+        localStorage.removeItem('token');
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    loadUser();
+  }, []);
+
+  const register = async (userData) => {
+    const data = await authService.register(userData);
+    setUser(data.user);
+    return data;
+  };
+
+  const value = {
+    user,
+    isLoading,
+    register,
+    login: authService.login,
+    logout: authService.logout
+  };
+
+  return (
+    <AuthContext.Provider value={value}>
+      {!isLoading && children}
+    </AuthContext.Provider>
+  );
+};
+```
+
+## 5. Utility Functions (client/src/utils/)
+
+### gpsUtils.js
+```javascript
+export const getCurrentLocation = () => {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) {
+      reject(new Error('Geolocation is not supported by your browser'));
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        resolve({
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude
+        });
+      },
+      (error) => {
+        reject(error);
+      }
+    );
+  });
+};
+
+export const calculateDistance = (lat1, lon1, lat2, lon2) => {
+  // Haversine formula implementation
+  const R = 6371; // Earth's radius in km
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = 
+    Math.sin(dLat/2) * Math.sin(dLat/2) +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
+    Math.sin(dLon/2) * Math.sin(dLon/2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  return R * c;
+};
+```
+
+## 6. Redux Store (client/src/store/)
+
+### authSlice.js
+```javascript
+import { createSlice } from '@reduxjs/toolkit';
+
+const initialState = {
+  user: null,
+  isLoading: false,
+  error: null
+};
+
+const authSlice = createSlice({
+  name: 'auth',
+  initialState,
+  reducers: {
+    loginStart(state) {
+      state.isLoading = true;
+      state.error = null;
+    },
+    loginSuccess(state, action) {
+      state.isLoading = false;
+      state.user = action.payload;
+    },
+    loginFailure(state, action) {
+      state.isLoading = false;
+      state.error = action.payload;
+    },
+    logout(state) {
+      state.user = null;
+    }
+  }
+});
+
+export const { loginStart, loginSuccess, loginFailure, logout } = authSlice.actions;
+export default authSlice.reducer;
+```
+
+## 7. Environment Configuration
+
+### .env.example (root directory)
+```env
+# Server
+PORT=5000
+MONGODB_URI=mongodb://localhost:27017/burmechat
+JWT_SECRET=your_jwt_secret
+JWT_EXPIRES_IN=90d
+
+# Client
+VITE_API_BASE_URL=http://localhost:5000/api/v1
+```
+
+## 8. Testing Files (server/tests/)
+
+### auth.test.js
+```javascript
+const request = require('supertest');
+const app = require('../app');
+const User = require('../models/User');
+
+describe('Auth Controller', () => {
+  beforeEach(async () => {
+    await User.deleteMany();
+  });
+
+  describe('POST /register', () => {
+    it('should register a new user', async () => {
+      const res = await request(app)
+        .post('/api/v1/auth/register')
+        .send({
+          name: 'Test User',
+          email: 'test@example.com',
+          password: 'password123',
+          latitude: 16.8054,
+          longitude: 96.1565
+        });
+
+      expect(res.statusCode).toEqual(201);
+      expect(res.body).toHaveProperty('token');
+    });
+  });
+});
+```
+
+ဤ code အပိုင်းများသည် သင့် project တွင် လိုအပ်မည့် အခြေခံလုပ်ဆောင်ချက်များကို အတူတကွဖြည့်စွက်ပေးထားပါသည်။ လိုအပ်ပါက နောက်ထပ် feature များ သို့မဟုတ် အသေးစိတ်ရှင်းလင်းချက်များအတွက် ဆက်လက်မေးမြန်းနိုင်ပါသည်။          (err) => {
             setError(t('location_access_denied'));
             setLoading(false);
           }
