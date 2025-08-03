@@ -1,715 +1,635 @@
-ကျေးဇူးပြု၍ Burme Chat Project အတွက် ကျန်ရှိနေသေးသော အရေးကြီးသည့် code အပိုင်းများကို အောက်ပါအတိုင်း ဖြည့်စွက်ပါမည်။
+ကျေးဇူးပြု၍ Burme Chat Project အတွက် ကျန်ရှိသော အရေးကြီးသည့် အပိုင်းများကို ဆက်လက်ရေးသားပေးပါမည်။
 
-## 1. Server Utilities (server/utils/)
+## 1. Video Call Component (WebRTC)
 
-### validation.js
+### client/src/components/call/VideoCallModal.jsx
 ```javascript
-const Joi = require('joi');
-const { phone } = require('phone');
+import { useState, useEffect, useRef } from 'react';
+import { Modal, Button, message } from 'antd';
+import { PhoneOutlined, CloseOutlined } from '@ant-design/icons';
+import socket from '../../services/socketService';
+import { useTranslation } from 'react-i18next';
 
-exports.validateRegisterInput = (data) => {
-  const schema = Joi.object({
-    name: Joi.string().min(3).max(30).required(),
-    email: Joi.string().email().required(),
-    password: Joi.string().min(6).required(),
-    confirmPassword: Joi.string().valid(Joi.ref('password')).required(),
-    phoneNumber: Joi.string().custom((value, helpers) => {
-      const result = phone(value);
-      if (!result.isValid) {
-        return helpers.error('any.invalid');
-      }
-      return value;
-    }).optional()
-  });
-
-  return schema.validate(data);
-};
-
-exports.validateLoginInput = (data) => {
-  const schema = Joi.object({
-    email: Joi.string().email().required(),
-    password: Joi.string().required()
-  });
-
-  return schema.validate(data);
-};
-```
-
-### socketAuth.js
-```javascript
-const jwt = require('jsonwebtoken');
-const User = require('../models/User');
-
-exports.authenticateSocket = async (socket, next) => {
-  try {
-    const token = socket.handshake.auth.token;
-    if (!token) {
-      return next(new Error('Authentication error'));
-    }
-
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    const user = await User.findById(decoded.id);
-
-    if (!user) {
-      return next(new Error('Authentication error'));
-    }
-
-    socket.user = user;
-    next();
-  } catch (err) {
-    next(new Error('Authentication error'));
-  }
-};
-```
-
-## 2. Client Hooks (client/src/hooks/)
-
-### useNearbyUsers.js
-```javascript
-import { useState, useEffect } from 'react';
-import { getCurrentLocation } from '../utils/gpsUtils';
-import api from '../services/api';
-
-const useNearbyUsers = (radius = 5) => {
-  const [nearbyUsers, setNearbyUsers] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+const VideoCallModal = ({ callId, onEndCall }) => {
+  const [localStream, setLocalStream] = useState(null);
+  const [remoteStream, setRemoteStream] = useState(null);
+  const [callStatus, setCallStatus] = useState('connecting');
+  const localVideoRef = useRef();
+  const remoteVideoRef = useRef();
+  const pcRef = useRef();
+  const { t } = useTranslation();
 
   useEffect(() => {
-    const fetchNearbyUsers = async () => {
+    const setupCall = async () => {
       try {
-        const { latitude, longitude } = await getCurrentLocation();
-        const response = await api.get(
-          `/users/nearby?lat=${latitude}&lng=${longitude}&radius=${radius}`
-        );
-        setNearbyUsers(response.data);
+        // 1. Get local media stream
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: true,
+          audio: true
+        });
+        setLocalStream(stream);
+        localVideoRef.current.srcObject = stream;
+
+        // 2. Create peer connection
+        const pc = new RTCPeerConnection({
+          iceServers: [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' }
+          ]
+        });
+        pcRef.current = pc;
+
+        // 3. Add local stream to connection
+        stream.getTracks().forEach(track => {
+          pc.addTrack(track, stream);
+        });
+
+        // 4. Handle remote stream
+        pc.ontrack = (event) => {
+          setRemoteStream(event.streams[0]);
+          remoteVideoRef.current.srcObject = event.streams[0];
+          setCallStatus('active');
+        };
+
+        // 5. Handle ICE candidates
+        pc.onicecandidate = (event) => {
+          if (event.candidate) {
+            socket.emit('call-signal', {
+              callId,
+              type: 'candidate',
+              data: event.candidate
+            });
+          }
+        };
+
+        // 6. Listen for signals
+        socket.on('call-signal', handleSignal);
+
       } catch (err) {
-        setError(err.message);
-      } finally {
-        setLoading(false);
+        message.error(t('call_setup_failed'));
+        onEndCall();
       }
     };
 
-    fetchNearbyUsers();
-  }, [radius]);
-
-  return { nearbyUsers, loading, error };
-};
-
-export default useNearbyUsers;
-```
-
-### useUnreadCount.js
-```javascript
-import { useState, useEffect } from 'react';
-import socket from '../services/socketService';
-import api from '../services/api';
-
-const useUnreadCount = () => {
-  const [unreadCount, setUnreadCount] = useState(0);
-
-  useEffect(() => {
-    const fetchUnreadCount = async () => {
-      try {
-        const response = await api.get('/chat/unread-count');
-        setUnreadCount(response.data.count);
-      } catch (err) {
-        console.error('Failed to fetch unread count:', err);
-      }
-    };
-
-    fetchUnreadCount();
-
-    socket.on('newMessage', () => {
-      setUnreadCount(prev => prev + 1);
-    });
-
-    socket.on('markAsRead', ({ roomId }) => {
-      setUnreadCount(prev => prev - 1);
-    });
+    if (callId) setupCall();
 
     return () => {
-      socket.off('newMessage');
-      socket.off('markAsRead');
+      if (pcRef.current) pcRef.current.close();
+      if (localStream) {
+        localStream.getTracks().forEach(track => track.stop());
+      }
+      socket.off('call-signal', handleSignal);
     };
-  }, []);
+  }, [callId]);
 
-  return unreadCount;
+  const handleSignal = async ({ type, data }) => {
+    const pc = pcRef.current;
+    try {
+      if (type === 'offer') {
+        await pc.setRemoteDescription(data);
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        
+        socket.emit('call-signal', {
+          callId,
+          type: 'answer',
+          data: answer
+        });
+      } 
+      else if (type === 'answer') {
+        await pc.setRemoteDescription(data);
+      } 
+      else if (type === 'candidate') {
+        await pc.addIceCandidate(data);
+      }
+    } catch (err) {
+      console.error('Signal handling error:', err);
+    }
+  };
+
+  const endCall = () => {
+    socket.emit('end-call', { callId });
+    onEndCall();
+  };
+
+  return (
+    <Modal
+      visible={!!callId}
+      footer={null}
+      closable={false}
+      width={800}
+      centered
+      className="video-call-modal"
+    >
+      <div className="video-container">
+        <div className="remote-video">
+          <video ref={remoteVideoRef} autoPlay playsInline />
+          {callStatus === 'connecting' && (
+            <div className="call-status">{t('waiting_for_answer')}</div>
+          )}
+        </div>
+        
+        <div className="local-video">
+          <video ref={localVideoRef} autoPlay playsInline muted />
+        </div>
+
+        <div className="call-controls">
+          <Button 
+            type="primary" 
+            danger 
+            icon={<CloseOutlined />}
+            onClick={endCall}
+            size="large"
+            className="end-call-btn"
+          />
+        </div>
+      </div>
+    </Modal>
+  );
 };
 
-export default useUnreadCount;
+export default VideoCallModal;
 ```
 
-## 3. UI Components (client/src/components/ui/)
+## 2. Server-side WebRTC Signaling
 
-### LoadingSpinner.jsx
+### server/services/callService.js
 ```javascript
-import { Spin } from 'antd';
-import { LoadingOutlined } from '@ant-design/icons';
+const Call = require('../models/Call');
+const socketService = require('./socketService');
 
-const LoadingSpinner = ({ size = 24 }) => {
+const activeCalls = new Map();
+
+exports.initCallHandling = () => {
+  const io = socketService.getIO();
+
+  io.on('connection', (socket) => {
+    socket.on('start-call', async ({ callerId, receiverId }) => {
+      const call = new Call({ caller: callerId, receiver: receiverId });
+      await call.save();
+      
+      activeCalls.set(call._id.toString(), {
+        callerSocket: socket.id,
+        receiverSocket: null
+      });
+
+      socket.to(receiverId).emit('incoming-call', {
+        callId: call._id,
+        callerId
+      });
+    });
+
+    socket.on('accept-call', ({ callId }) => {
+      const call = activeCalls.get(callId);
+      if (call) {
+        call.receiverSocket = socket.id;
+        socket.to(call.callerSocket).emit('call-accepted', { callId });
+      }
+    });
+
+    socket.on('call-signal', ({ callId, ...signal }) => {
+      const call = activeCalls.get(callId);
+      if (!call) return;
+
+      const targetSocket = socket.id === call.callerSocket 
+        ? call.receiverSocket 
+        : call.callerSocket;
+      
+      if (targetSocket) {
+        socket.to(targetSocket).emit('call-signal', signal);
+      }
+    });
+
+    socket.on('end-call', async ({ callId }) => {
+      const call = activeCalls.get(callId);
+      if (!call) return;
+
+      if (call.receiverSocket) {
+        socket.to(call.receiverSocket).emit('call-ended');
+      }
+      if (call.callerSocket && call.callerSocket !== socket.id) {
+        socket.to(call.callerSocket).emit('call-ended');
+      }
+
+      await Call.findByIdAndUpdate(callId, { endedAt: new Date() });
+      activeCalls.delete(callId);
+    });
+  });
+};
+```
+
+## 3. Message Reactions
+
+### client/src/components/chat/MessageReactions.jsx
+```javascript
+import { useState } from 'react';
+import { Popover, Badge, Tooltip } from 'antd';
+import { SmileOutlined } from '@ant-design/icons';
+import api from '../../services/api';
+import { useTranslation } from 'react-i18next';
+
+const reactions = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
+
+const MessageReactions = ({ messageId, initialReactions = {} }) => {
+  const [reactionsData, setReactionsData] = useState(initialReactions);
+  const [loading, setLoading] = useState(false);
+  const { t } = useTranslation();
+
+  const handleReaction = async (emoji) => {
+    try {
+      setLoading(true);
+      const response = await api.post(`/messages/${messageId}/react`, { emoji });
+      setReactionsData(response.data.reactions);
+    } catch (err) {
+      console.error('Failed to add reaction:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const reactionList = Object.entries(reactionsData)
+    .filter(([_, count]) => count > 0)
+    .map(([emoji, count]) => (
+      <Tooltip key={emoji} title={`${count} ${t('people')}`}>
+        <span className="reaction-badge">{emoji} {count}</span>
+      </Tooltip>
+    ));
+
   return (
-    <div className="loading-spinner">
-      <Spin indicator={<LoadingOutlined style={{ fontSize: size }} spin />} />
+    <div className="message-reactions">
+      {reactionList}
+      
+      <Popover
+        content={(
+          <div className="reaction-picker">
+            {reactions.map(emoji => (
+              <button
+                key={emoji}
+                onClick={() => handleReaction(emoji)}
+                disabled={loading}
+                className="reaction-option"
+              >
+                {emoji}
+              </button>
+            ))}
+          </div>
+        )}
+        trigger="click"
+        placement="top"
+      >
+        <Badge dot={reactionList.length === 0}>
+          <button className="add-reaction-btn">
+            <SmileOutlined />
+          </button>
+        </Badge>
+      </Popover>
     </div>
   );
 };
 
-export default LoadingSpinner;
+export default MessageReactions;
 ```
 
-### ResponsiveDrawer.jsx
+## 4. Admin Dashboard Components
+
+### client/src/pages/admin/UserManagement.jsx
 ```javascript
-import { useState, useEffect } from 'react';
-import { Drawer, Button } from 'antd';
-import { MenuOutlined } from '@ant-design/icons';
+import { useState, useEffect, useMemo } from 'react';
+import { Table, Tag, Button, Input, Select, message } from 'antd';
+import { SearchOutlined, EditOutlined } from '@ant-design/icons';
+import api from '../../services/api';
+import { useTranslation } from 'react-i18next';
 
-const ResponsiveDrawer = ({ children }) => {
-  const [visible, setVisible] = useState(false);
-  const [isMobile, setIsMobile] = useState(false);
-
-  useEffect(() => {
-    const checkScreenSize = () => {
-      setIsMobile(window.innerWidth < 768);
-    };
-
-    checkScreenSize();
-    window.addEventListener('resize', checkScreenSize);
-    
-    return () => window.removeEventListener('resize', checkScreenSize);
-  }, []);
-
-  return (
-    <>
-      {isMobile && (
-        <Button 
-          type="text" 
-          icon={<MenuOutlined />} 
-          onClick={() => setVisible(true)}
-          className="drawer-button"
-        />
-      )}
-
-      {isMobile ? (
-        <Drawer
-          placement="left"
-          onClose={() => setVisible(false)}
-          visible={visible}
-          width={250}
-        >
-          {children}
-        </Drawer>
-      ) : (
-        <div className="sidebar">
-          {children}
-        </div>
-      )}
-    </>
-  );
-};
-
-export default ResponsiveDrawer;
-```
-
-## 4. Server Models (server/models/)
-
-### Report.js
-```javascript
-const mongoose = require('mongoose');
-
-const reportSchema = new mongoose.Schema({
-  reporter: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
-    required: true
-  },
-  reportedUser: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
-    required: true
-  },
-  reportedChat: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'ChatRoom'
-  },
-  reason: {
-    type: String,
-    required: true,
-    enum: ['spam', 'harassment', 'inappropriate', 'other']
-  },
-  description: {
-    type: String,
-    required: true
-  },
-  status: {
-    type: String,
-    enum: ['pending', 'reviewed', 'resolved'],
-    default: 'pending'
-  },
-  actionTaken: {
-    type: String
-  }
-}, { timestamps: true });
-
-module.exports = mongoose.model('Report', reportSchema);
-```
-
-### DeviceToken.js
-```javascript
-const mongoose = require('mongoose');
-
-const deviceTokenSchema = new mongoose.Schema({
-  user: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
-    required: true
-  },
-  token: {
-    type: String,
-    required: true,
-    unique: true
-  },
-  platform: {
-    type: String,
-    enum: ['android', 'ios', 'web'],
-    required: true
-  },
-  lastActive: {
-    type: Date,
-    default: Date.now
-  }
-});
-
-module.exports = mongoose.model('DeviceToken', deviceTokenSchema);
-```
-
-## 5. Server Services (server/services/)
-
-### locationService.js
-```javascript
-const User = require('../models/User');
-const { calculateDistance } = require('../utils/geoUtils');
-
-exports.updateUserLocation = async (userId, coordinates) => {
-  await User.findByIdAndUpdate(userId, {
-    location: {
-      type: 'Point',
-      coordinates
-    },
-    lastActive: new Date()
-  });
-};
-
-exports.findNearbyUsers = async (latitude, longitude, radius, excludeUserId) => {
-  const users = await User.find({
-    location: {
-      $near: {
-        $geometry: {
-          type: "Point",
-          coordinates: [longitude, latitude]
-        },
-        $maxDistance: radius * 1000
-      }
-    },
-    _id: { $ne: excludeUserId }
-  }).select('name profilePicture location');
-
-  return users.map(user => ({
-    ...user.toObject(),
-    distance: calculateDistance(
-      latitude,
-      longitude,
-      user.location.coordinates[1],
-      user.location.coordinates[0]
-    )
-  }));
-};
-```
-
-### notificationService.js
-```javascript
-const Notification = require('../models/Notification');
-const pushNotification = require('./pushNotification');
-const socketService = require('./socketService');
-
-exports.createNotification = async (userId, type, content, relatedData = {}) => {
-  const notification = await Notification.create({
-    user: userId,
-    type,
-    content,
-    ...relatedData
-  });
-
-  // Send real-time notification via socket
-  const io = socketService.getIO();
-  io.to(userId.toString()).emit('newNotification', notification);
-
-  // Send push notification
-  await pushNotification.send(userId, {
-    title: getNotificationTitle(type),
-    body: content
-  });
-
-  return notification;
-};
-
-function getNotificationTitle(type) {
-  const titles = {
-    message: 'New Message',
-    friendRequest: 'Friend Request',
-    friendAccept: 'Friend Request Accepted'
-  };
-  return titles[type] || 'New Notification';
-}
-```
-
-## 6. Client Utils (client/src/utils/)
-
-### chatUtils.js
-```javascript
-export const formatMessageTime = (timestamp) => {
-  const date = new Date(timestamp);
-  const now = new Date();
-  
-  if (date.toDateString() === now.toDateString()) {
-    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  } else if (date.getFullYear() === now.getFullYear()) {
-    return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
-  } else {
-    return date.toLocaleDateString([], { year: 'numeric', month: 'short', day: 'numeric' });
-  }
-};
-
-export const groupMessagesByDate = (messages) => {
-  const grouped = {};
-  
-  messages.forEach(message => {
-    const date = new Date(message.createdAt).toDateString();
-    if (!grouped[date]) {
-      grouped[date] = [];
-    }
-    grouped[date].push(message);
-  });
-
-  return grouped;
-};
-```
-
-### fileUtils.js
-```javascript
-export const validateFile = (file, allowedTypes, maxSizeMB) => {
-  const fileType = file.type.split('/')[0];
-  const isValidType = allowedTypes.includes(fileType);
-  const isValidSize = file.size <= maxSizeMB * 1024 * 1024;
-
-  return {
-    isValid: isValidType && isValidSize,
-    errors: [
-      !isValidType && `File type must be: ${allowedTypes.join(', ')}`,
-      !isValidSize && `File size must be under ${maxSizeMB}MB`
-    ].filter(Boolean)
-  };
-};
-
-export const readFileAsDataURL = (file) => {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
-};
-```
-
-## 7. Server Controllers (server/controllers/)
-
-### adminController.js
-```javascript
-const User = require('../models/User');
-const Report = require('../models/Report');
-
-exports.banUser = async (req, res) => {
-  try {
-    const user = await User.findByIdAndUpdate(
-      req.params.userId,
-      { isBanned: true },
-      { new: true }
-    );
-
-    if (!user) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-
-    // Update related reports
-    await Report.updateMany(
-      { reportedUser: user._id, status: 'pending' },
-      { status: 'resolved', actionTaken: 'User banned' }
-    );
-
-    res.json({ message: 'User banned successfully' });
-  } catch (err) {
-    res.status(500).json({ error: 'Server error' });
-  }
-};
-
-exports.getPlatformStats = async (req, res) => {
-  try {
-    const [userCount, activeUserCount, bannedUserCount] = await Promise.all([
-      User.countDocuments(),
-      User.countDocuments({ lastActive: { $gt: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) }),
-      User.countDocuments({ isBanned: true })
-    ]);
-
-    res.json({
-      userCount,
-      activeUserCount,
-      bannedUserCount
-    });
-  } catch (err) {
-    res.status(500).json({ error: 'Server error' });
-  }
-};
-```
-
-### deviceController.js
-```javascript
-const DeviceToken = require('../models/DeviceToken');
-
-exports.registerDevice = async (req, res) => {
-  try {
-    const { token, platform } = req.body;
-
-    // Check if token already exists
-    const existingToken = await DeviceToken.findOne({ token });
-    if (existingToken) {
-      return res.json({ message: 'Device already registered' });
-    }
-
-    // Create new device token
-    await DeviceToken.create({
-      user: req.user._id,
-      token,
-      platform
-    });
-
-    res.json({ message: 'Device registered successfully' });
-  } catch (err) {
-    res.status(500).json({ error: 'Server error' });
-  }
-};
-
-exports.unregisterDevice = async (req, res) => {
-  try {
-    await DeviceToken.findOneAndDelete({
-      user: req.user._id,
-      token: req.body.token
-    });
-
-    res.json({ message: 'Device unregistered successfully' });
-  } catch (err) {
-    res.status(500).json({ error: 'Server error' });
-  }
-};
-```
-
-## 8. Client Contexts (client/src/contexts/)
-
-### ChatContext.jsx
-```javascript
-import { createContext, useState, useEffect } from 'react';
-import socket from '../services/socketService';
-
-export const ChatContext = createContext();
-
-export const ChatProvider = ({ children }) => {
-  const [activeRooms, setActiveRooms] = useState([]);
-  const [unreadCounts, setUnreadCounts] = useState({});
-  const [typingUsers, setTypingUsers] = useState({});
-
-  useEffect(() => {
-    socket.on('roomListUpdate', (rooms) => {
-      setActiveRooms(rooms);
-    });
-
-    socket.on('unreadCountUpdate', ({ roomId, count }) => {
-      setUnreadCounts(prev => ({ ...prev, [roomId]: count }));
-    });
-
-    socket.on('userTyping', ({ roomId, userId, isTyping }) => {
-      setTypingUsers(prev => {
-        const roomTyping = prev[roomId] || [];
-        return {
-          ...prev,
-          [roomId]: isTyping 
-            ? [...roomTyping.filter(id => id !== userId), userId]
-            : roomTyping.filter(id => id !== userId)
-        };
-      });
-    });
-
-    return () => {
-      socket.off('roomListUpdate');
-      socket.off('unreadCountUpdate');
-      socket.off('userTyping');
-    };
-  }, []);
-
-  const value = {
-    activeRooms,
-    unreadCounts,
-    typingUsers,
-    joinRoom: (roomId) => socket.emit('joinRoom', roomId),
-    leaveRoom: (roomId) => socket.emit('leaveRoom', roomId),
-    markAsRead: (roomId) => socket.emit('markAsRead', roomId)
-  };
-
-  return (
-    <ChatContext.Provider value={value}>
-      {children}
-    </ChatContext.Provider>
-  );
-};
-```
-
-### UserContext.jsx
-```javascript
-import { createContext, useState, useEffect } from 'react';
-import api from '../services/api';
-
-export const UserContext = createContext();
-
-export const UserProvider = ({ children }) => {
-  const [currentUser, setCurrentUser] = useState(null);
+const UserManagement = () => {
+  const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [pagination, setPagination] = useState({ current: 1, pageSize: 10 });
+  const [filters, setFilters] = useState({});
+  const { t } = useTranslation();
 
   useEffect(() => {
-    const fetchCurrentUser = async () => {
+    const fetchUsers = async () => {
       try {
-        const response = await api.get('/users/me');
-        setCurrentUser(response.data);
+        setLoading(true);
+        const params = {
+          page: pagination.current,
+          limit: pagination.pageSize,
+          ...filters
+        };
+        const response = await api.get('/admin/users', { params });
+        setUsers(response.data.users);
+        setPagination(prev => ({
+          ...prev,
+          total: response.data.total
+        }));
       } catch (err) {
-        console.error('Failed to fetch user:', err);
+        message.error(t('user_fetch_failed'));
       } finally {
         setLoading(false);
       }
     };
 
-    fetchCurrentUser();
-  }, []);
+    fetchUsers();
+  }, [pagination.current, pagination.pageSize, filters]);
 
-  const updateUser = (updates) => {
-    setCurrentUser(prev => ({ ...prev, ...updates }));
+  const handleSearch = (value) => {
+    setFilters(prev => ({ ...prev, search: value }));
+    setPagination(prev => ({ ...prev, current: 1 }));
   };
 
-  const value = {
-    currentUser,
-    loading,
-    updateUser,
-    refetchUser: async () => {
-      const response = await api.get('/users/me');
-      setCurrentUser(response.data);
+  const handleStatusChange = async (userId, isBanned) => {
+    try {
+      await api.patch(`/admin/users/${userId}/status`, { isBanned });
+      setUsers(prev => prev.map(user => 
+        user._id === userId ? { ...user, isBanned } : user
+      ));
+      message.success(t('user_updated'));
+    } catch (err) {
+      message.error(t('update_failed'));
     }
   };
 
+  const columns = [
+    {
+      title: t('name'),
+      dataIndex: 'name',
+      key: 'name',
+      render: (text, record) => (
+        <div className="user-cell">
+          <img src={record.profilePicture} alt={text} className="user-avatar" />
+          <span>{text}</span>
+        </div>
+      )
+    },
+    {
+      title: t('email'),
+      dataIndex: 'email',
+      key: 'email'
+    },
+    {
+      title: t('status'),
+      key: 'status',
+      render: (_, record) => (
+        <Tag color={record.isBanned ? 'red' : 'green'}>
+          {record.isBanned ? t('banned') : t('active')}
+        </Tag>
+      )
+    },
+    {
+      title: t('actions'),
+      key: 'actions',
+      render: (_, record) => (
+        <Button
+          type={record.isBanned ? 'primary' : 'danger'}
+          onClick={() => handleStatusChange(record._id, !record.isBanned)}
+        >
+          {record.isBanned ? t('unban') : t('ban')}
+        </Button>
+      )
+    }
+  ];
+
   return (
-    <UserContext.Provider value={value}>
-      {children}
-    </UserContext.Provider>
+    <div className="user-management">
+      <div className="toolbar">
+        <Input
+          placeholder={t('search_users')}
+          prefix={<SearchOutlined />}
+          allowClear
+          onChange={(e) => handleSearch(e.target.value)}
+          style={{ width: 300 }}
+        />
+        
+        <Select
+          placeholder={t('filter_status')}
+          allowClear
+          onChange={(value) => setFilters(prev => ({ ...prev, status: value }))}
+          style={{ width: 150 }}
+          options={[
+            { value: 'active', label: t('active') },
+            { value: 'banned', label: t('banned') }
+          ]}
+        />
+      </div>
+
+      <Table
+        columns={columns}
+        dataSource={users}
+        rowKey="_id"
+        loading={loading}
+        pagination={pagination}
+        onChange={(newPagination) => setPagination(newPagination)}
+      />
+    </div>
   );
 };
+
+export default UserManagement;
 ```
 
-## 9. Server Routes (server/routes/)
+## 5. Automated Testing Setup
 
-### analyticsRoutes.js
+### client/src/tests/setupTests.js
 ```javascript
-const express = require('express');
-const router = express.Router();
-const analyticsController = require('../controllers/analyticsController');
-const authController = require('../controllers/authController');
+import '@testing-library/jest-dom';
+import { configure } from '@testing-library/react';
+import { TextEncoder, TextDecoder } from 'util';
 
-router.use(authController.protect, authController.restrictTo('admin'));
+// Mock global objects
+global.TextEncoder = TextEncoder;
+global.TextDecoder = TextDecoder;
 
-router.get('/stats', analyticsController.getPlatformStats);
-router.get('/user-activity', analyticsController.getUserActivity);
-router.get('/message-trends', analyticsController.getMessageTrends);
+// Configure test behavior
+configure({
+  testIdAttribute: 'data-testid',
+});
 
-module.exports = router;
+// Mock socket.io
+jest.mock('../services/socketService', () => ({
+  on: jest.fn(),
+  emit: jest.fn(),
+  off: jest.fn(),
+}));
+
+// Mock API calls
+jest.mock('../services/api', () => ({
+  get: jest.fn(),
+  post: jest.fn(),
+  patch: jest.fn(),
+  delete: jest.fn(),
+  interceptors: {
+    request: { use: jest.fn() },
+    response: { use: jest.fn() },
+  },
+}));
 ```
 
-### uploadRoutes.js
+### server/tests/auth.test.js
 ```javascript
-const express = require('express');
-const router = express.Router();
-const uploadController = require('../controllers/uploadController');
-const authController = require('../controllers/authController');
-const { uploadUserPhoto, resizeUserPhoto } = require('../services/fileUpload');
+const request = require('supertest');
+const app = require('../app');
+const User = require('../models/User');
+const { connectDB, disconnectDB } = require('../config/database');
 
-router.use(authController.protect);
-
-router.post('/profile-photo', 
-  uploadUserPhoto,
-  resizeUserPhoto,
-  uploadController.uploadProfilePhoto
-);
-
-router.post('/chat-media', 
-  uploadController.uploadChatMedia
-);
-
-module.exports = router;
-```
-
-## 10. Client Services (client/src/services/)
-
-### friendService.js
-```javascript
-import api from './api';
-
-export const getFriends = async () => {
-  const response = await api.get('/friends');
-  return response.data;
-};
-
-export const getFriendRequests = async () => {
-  const response = await api.get('/friends/requests');
-  return response.data;
-};
-
-export const sendFriendRequest = async (userId) => {
-  const response = await api.post(`/friends/${userId}`);
-  return response.data;
-};
-
-export const respondToRequest = async (requestId, accept) => {
-  const response = await api.patch(`/friends/requests/${requestId}`, {
-    action: accept ? 'accept' : 'reject'
+describe('Auth Controller', () => {
+  beforeAll(async () => {
+    await connectDB();
   });
-  return response.data;
-};
 
-export const removeFriend = async (userId) => {
-  const response = await api.delete(`/friends/${userId}`);
-  return response.data;
-};
+  afterAll(async () => {
+    await disconnectDB();
+  });
+
+  beforeEach(async () => {
+    await User.deleteMany();
+  });
+
+  describe('POST /register', () => {
+    it('should register a new user with valid data', async () => {
+      const res = await request(app)
+        .post('/api/v1/auth/register')
+        .send({
+          name: 'Test User',
+          email: 'test@example.com',
+          password: 'password123',
+          confirmPassword: 'password123'
+        });
+
+      expect(res.statusCode).toEqual(201);
+      expect(res.body).toHaveProperty('token');
+      expect(res.body.data.user.email).toBe('test@example.com');
+    });
+
+    it('should return 400 with invalid email', async () => {
+      const res = await request(app)
+        .post('/api/v1/auth/register')
+        .send({
+          name: 'Test User',
+          email: 'invalid-email',
+          password: 'password123',
+          confirmPassword: 'password123'
+        });
+
+      expect(res.statusCode).toEqual(400);
+      expect(res.body.status).toBe('fail');
+    });
+  });
+
+  describe('POST /login', () => {
+    it('should login with valid credentials', async () => {
+      // First register a user
+      await request(app)
+        .post('/api/v1/auth/register')
+        .send({
+          name: 'Test User',
+          email: 'test@example.com',
+          password: 'password123',
+          confirmPassword: 'password123'
+        });
+
+      // Then test login
+      const res = await request(app)
+        .post('/api/v1/auth/login')
+        .send({
+          email: 'test@example.com',
+          password: 'password123'
+        });
+
+      expect(res.statusCode).toEqual(200);
+      expect(res.body).toHaveProperty('token');
+    });
+  });
+});
 ```
 
-### locationService.js
-```javascript
-import api from './api';
+## 6. Docker Configuration
 
-export const updateLocation = async (latitude, longitude) => {
-  const response = await api.patch('/users/location', {
-    latitude,
-    longitude
-  });
-  return response.data;
-};
+### Dockerfile (Backend)
+```dockerfile
+FROM node:16-alpine
 
-export const getNearbyUsers = async (latitude, longitude, radius) => {
-  const response = await api.get(
-    `/users/nearby?lat=${latitude}&lng=${longitude}&radius=${radius}`
-  );
-  return response.data;
-};
+WORKDIR /app
+
+COPY package*.json ./
+RUN npm install
+
+COPY . .
+
+ENV NODE_ENV=production
+ENV PORT=5000
+
+RUN npm run build
+
+EXPOSE 5000
+
+CMD ["npm", "start"]
+```
+
+### Dockerfile (Frontend)
+```dockerfile
+FROM node:16-alpine as builder
+
+WORKDIR /app
+
+COPY package*.json ./
+RUN npm install
+
+COPY . .
+RUN npm run build
+
+FROM nginx:alpine
+
+COPY --from=builder /app/dist /usr/share/nginx/html
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+
+EXPOSE 80
+
+CMD ["nginx", "-g", "daemon off;"]
+```
+
+### docker-compose.prod.yml
+```yaml
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    ports:
+      - "5000:5000"
+    environment:
+      - NODE_ENV=production
+      - MONGODB_URI=mongodb://mongo:27017/burmechat
+      - JWT_SECRET=your_jwt_secret_prod
+      - REDIS_HOST=redis
+    depends_on:
+      - mongo
+      - redis
+
+  frontend:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+
+  mongo:
+    image: mongo:5.0
+    volumes:
+      - mongo-data:/data/db
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=root
+      - MONGO_INITDB_ROOT_PASSWORD=example
+
+  redis:
+    image: redis:6.2-alpine
+    volumes:
+      - redis-data:/data
+
+volumes:
+  mongo-data:
+  redis-data:
 ```
