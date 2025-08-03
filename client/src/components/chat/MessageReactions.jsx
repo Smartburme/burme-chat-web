@@ -1,13 +1,15 @@
 import { useState } from 'react';
-import { Popover, Button, Space, Badge } from 'antd';
+import { Popover, Badge, Tooltip } from 'antd';
 import { SmileOutlined } from '@ant-design/icons';
 import api from '../../services/api';
+import { useTranslation } from 'react-i18next';
 
 const reactions = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
 
-const MessageReactions = ({ messageId, initialReactions }) => {
-  const [reactionsData, setReactionsData] = useState(initialReactions || {});
+const MessageReactions = ({ messageId, initialReactions = {} }) => {
+  const [reactionsData, setReactionsData] = useState(initialReactions);
   const [loading, setLoading] = useState(false);
+  const { t } = useTranslation();
 
   const handleReaction = async (emoji) => {
     try {
@@ -21,33 +23,43 @@ const MessageReactions = ({ messageId, initialReactions }) => {
     }
   };
 
-  const reactionContent = (
-    <Space size="small">
-      {reactions.map(emoji => (
-        <Button 
-          key={emoji} 
-          type="text" 
-          onClick={() => handleReaction(emoji)}
-          disabled={loading}
-        >
-          {emoji}
-        </Button>
-      ))}
-    </Space>
-  );
-
-  const totalReactions = Object.values(reactionsData).reduce((sum, count) => sum + count, 0);
+  const reactionList = Object.entries(reactionsData)
+    .filter(([_, count]) => count > 0)
+    .map(([emoji, count]) => (
+      <Tooltip key={emoji} title={`${count} ${t('people')}`}>
+        <span className="reaction-badge">{emoji} {count}</span>
+      </Tooltip>
+    ));
 
   return (
-    <Popover content={reactionContent} trigger="click">
-      <Badge count={totalReactions}>
-        <Button 
-          type="text" 
-          icon={<SmileOutlined />} 
-          size="small"
-        />
-      </Badge>
-    </Popover>
+    <div className="message-reactions">
+      {reactionList}
+      
+      <Popover
+        content={(
+          <div className="reaction-picker">
+            {reactions.map(emoji => (
+              <button
+                key={emoji}
+                onClick={() => handleReaction(emoji)}
+                disabled={loading}
+                className="reaction-option"
+              >
+                {emoji}
+              </button>
+            ))}
+          </div>
+        )}
+        trigger="click"
+        placement="top"
+      >
+        <Badge dot={reactionList.length === 0}>
+          <button className="add-reaction-btn">
+            <SmileOutlined />
+          </button>
+        </Badge>
+      </Popover>
+    </div>
   );
 };
 
