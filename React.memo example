@@ -1,0 +1,9 @@
+// React.memo example
+const MemoizedComponent = React.memo(({ prop }) => {
+  return <div>{prop}</div>;
+});
+
+// Database indexing
+// server/models/User.js
+userSchema.index({ email: 1 }, { unique: true });
+userSchema.index({ location: '2dsphere' });
