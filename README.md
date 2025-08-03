@@ -1,737 +1,715 @@
-ကျေးဇူးပြု၍ Burme Chat Project အတွက် pages/ ထဲရှိ ကျန်ရှိသော component များကို ဖြည့်စွက်ရေးသားပေးပါမည်။
+ကျေးဇူးပြု၍ Burme Chat Project အတွက် ကျန်ရှိနေသေးသော အရေးကြီးသည့် code အပိုင်းများကို အောက်ပါအတိုင်း ဖြည့်စွက်ပါမည်။
 
-## 1. Auth Pages
+## 1. Server Utilities (server/utils/)
 
-### client/src/pages/Auth/LoginPage.jsx
+### validation.js
 ```javascript
-import { useState } from 'react';
-import { Form, Input, Button, message } from 'antd';
-import { UserOutlined, LockOutlined } from '@ant-design/icons';
-import { Link, useNavigate } from 'react-router-dom';
-import authService from '../../services/authService';
-import { useTranslation } from 'react-i18next';
+const Joi = require('joi');
+const { phone } = require('phone');
 
-const LoginPage = () => {
-  const [loading, setLoading] = useState(false);
-  const navigate = useNavigate();
-  const { t } = useTranslation();
+exports.validateRegisterInput = (data) => {
+  const schema = Joi.object({
+    name: Joi.string().min(3).max(30).required(),
+    email: Joi.string().email().required(),
+    password: Joi.string().min(6).required(),
+    confirmPassword: Joi.string().valid(Joi.ref('password')).required(),
+    phoneNumber: Joi.string().custom((value, helpers) => {
+      const result = phone(value);
+      if (!result.isValid) {
+        return helpers.error('any.invalid');
+      }
+      return value;
+    }).optional()
+  });
 
-  const onFinish = async (values) => {
-    try {
-      setLoading(true);
-      await authService.login(values);
-      message.success(t('login_success'));
-      navigate('/');
-    } catch (err) {
-      message.error(err.response?.data?.message || t('login_failed'));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <div className="auth-page">
-      <div className="auth-card">
-        <h1>{t('login')}</h1>
-        <Form
-          name="login"
-          initialValues={{ remember: true }}
-          onFinish={onFinish}
-        >
-          <Form.Item
-            name="email"
-            rules={[
-              { required: true, message: t('email_required') },
-              { type: 'email', message: t('invalid_email') }
-            ]}
-          >
-            <Input prefix={<UserOutlined />} placeholder={t('email')} />
-          </Form.Item>
-
-          <Form.Item
-            name="password"
-            rules={[{ required: true, message: t('password_required') }]}
-          >
-            <Input.Password prefix={<LockOutlined />} placeholder={t('password')} />
-          </Form.Item>
-
-          <Form.Item>
-            <Button type="primary" htmlType="submit" loading={loading} block>
-              {t('login')}
-            </Button>
-          </Form.Item>
-        </Form>
-
-        <div className="auth-links">
-          <Link to="/register">{t('register_now')}</Link>
-          <Link to="/forgot-password">{t('forgot_password')}</Link>
-        </div>
-      </div>
-    </div>
-  );
+  return schema.validate(data);
 };
 
-export default LoginPage;
-```
+exports.validateLoginInput = (data) => {
+  const schema = Joi.object({
+    email: Joi.string().email().required(),
+    password: Joi.string().required()
+  });
 
-### client/src/pages/Auth/RegisterPage.jsx
-```javascript
-import { useState } from 'react';
-import { Form, Input, Button, message } from 'antd';
-import { UserOutlined, MailOutlined, LockOutlined } from '@ant-design/icons';
-import { Link, useNavigate } from 'react-router-dom';
-import authService from '../../services/authService';
-import { useTranslation } from 'react-i18next';
-
-const RegisterPage = () => {
-  const [loading, setLoading] = useState(false);
-  const navigate = useNavigate();
-  const { t } = useTranslation();
-
-  const onFinish = async (values) => {
-    try {
-      setLoading(true);
-      await authService.register(values);
-      message.success(t('register_success'));
-      navigate('/login');
-    } catch (err) {
-      message.error(err.response?.data?.message || t('register_failed'));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <div className="auth-page">
-      <div className="auth-card">
-        <h1>{t('register')}</h1>
-        <Form
-          name="register"
-          onFinish={onFinish}
-          scrollToFirstError
-        >
-          <Form.Item
-            name="name"
-            rules={[{ required: true, message: t('name_required') }]}
-          >
-            <Input prefix={<UserOutlined />} placeholder={t('full_name')} />
-          </Form.Item>
-
-          <Form.Item
-            name="email"
-            rules={[
-              { required: true, message: t('email_required') },
-              { type: 'email', message: t('invalid_email') }
-            ]}
-          >
-            <Input prefix={<MailOutlined />} placeholder={t('email')} />
-          </Form.Item>
-
-          <Form.Item
-            name="password"
-            rules={[{ required: true, message: t('password_required') }]}
-            hasFeedback
-          >
-            <Input.Password prefix={<LockOutlined />} placeholder={t('password')} />
-          </Form.Item>
-
-          <Form.Item
-            name="confirm"
-            dependencies={['password']}
-            hasFeedback
-            rules={[
-              { required: true, message: t('confirm_password_required') },
-              ({ getFieldValue }) => ({
-                validator(_, value) {
-                  if (!value || getFieldValue('password') === value) {
-                    return Promise.resolve();
-                  }
-                  return Promise.reject(new Error(t('password_mismatch')));
-                },
-              }),
-            ]}
-          >
-            <Input.Password prefix={<LockOutlined />} placeholder={t('confirm_password')} />
-          </Form.Item>
-
-          <Form.Item>
-            <Button type="primary" htmlType="submit" loading={loading} block>
-              {t('register')}
-            </Button>
-          </Form.Item>
-        </Form>
-
-        <div className="auth-links">
-          <Link to="/login">{t('already_have_account')}</Link>
-        </div>
-      </div>
-    </div>
-  );
+  return schema.validate(data);
 };
-
-export default RegisterPage;
 ```
 
-## 2. Chat Pages
+### socketAuth.js
+```javascript
+const jwt = require('jsonwebtoken');
+const User = require('../models/User');
 
-### client/src/pages/Chat/ChatListPage.jsx
+exports.authenticateSocket = async (socket, next) => {
+  try {
+    const token = socket.handshake.auth.token;
+    if (!token) {
+      return next(new Error('Authentication error'));
+    }
+
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const user = await User.findById(decoded.id);
+
+    if (!user) {
+      return next(new Error('Authentication error'));
+    }
+
+    socket.user = user;
+    next();
+  } catch (err) {
+    next(new Error('Authentication error'));
+  }
+};
+```
+
+## 2. Client Hooks (client/src/hooks/)
+
+### useNearbyUsers.js
 ```javascript
 import { useState, useEffect } from 'react';
-import { List, Input, Badge, Avatar } from 'antd';
-import { SearchOutlined } from '@ant-design/icons';
-import { useNavigate } from 'react-router-dom';
-import api from '../../services/api';
-import { useTranslation } from 'react-i18next';
+import { getCurrentLocation } from '../utils/gpsUtils';
+import api from '../services/api';
 
-const ChatListPage = () => {
-  const [chats, setChats] = useState([]);
+const useNearbyUsers = (radius = 5) => {
+  const [nearbyUsers, setNearbyUsers] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [searchText, setSearchText] = useState('');
-  const navigate = useNavigate();
-  const { t } = useTranslation();
+  const [error, setError] = useState(null);
 
   useEffect(() => {
-    const fetchChats = async () => {
+    const fetchNearbyUsers = async () => {
       try {
-        const response = await api.get('/chat/rooms');
-        setChats(response.data);
+        const { latitude, longitude } = await getCurrentLocation();
+        const response = await api.get(
+          `/users/nearby?lat=${latitude}&lng=${longitude}&radius=${radius}`
+        );
+        setNearbyUsers(response.data);
       } catch (err) {
-        console.error(err);
+        setError(err.message);
       } finally {
         setLoading(false);
       }
     };
 
-    fetchChats();
-  }, []);
+    fetchNearbyUsers();
+  }, [radius]);
 
-  const filteredChats = chats.filter(chat =>
-    chat.name.toLowerCase().includes(searchText.toLowerCase())
-  );
-
-  return (
-    <div className="chat-list-page">
-      <div className="chat-list-header">
-        <h1>{t('chats')}</h1>
-        <Input
-          placeholder={t('search_chats')}
-          prefix={<SearchOutlined />}
-          value={searchText}
-          onChange={(e) => setSearchText(e.target.value)}
-          allowClear
-        />
-      </div>
-
-      <List
-        loading={loading}
-        dataSource={filteredChats}
-        renderItem={(chat) => (
-          <List.Item
-            className="chat-item"
-            onClick={() => navigate(`/chat/${chat._id}`)}
-          >
-            <List.Item.Meta
-              avatar={
-                <Badge count={chat.unreadCount} offset={[-5, 5]}>
-                  <Avatar src={chat.isGroup ? chat.avatar : chat.participants[0]?.profilePicture} />
-                </Badge>
-              }
-              title={chat.name}
-              description={chat.lastMessage?.text || t('no_messages')}
-            />
-          </List.Item>
-        )}
-      />
-    </div>
-  );
+  return { nearbyUsers, loading, error };
 };
 
-export default ChatListPage;
+export default useNearbyUsers;
 ```
 
-### client/src/pages/Chat/ChatRoomPage.jsx
+### useUnreadCount.js
 ```javascript
-import { useState, useEffect, useRef } from 'react';
-import { useParams } from 'react-router-dom';
-import { Input, Button, Avatar, message } from 'antd';
-import { SendOutlined } from '@ant-design/icons';
-import api from '../../services/api';
-import socket from '../../services/socketService';
-import MessageList from '../../components/chat/MessageList';
-import TypingIndicator from '../../components/chat/TypingIndicator';
-import { useTranslation } from 'react-i18next';
+import { useState, useEffect } from 'react';
+import socket from '../services/socketService';
+import api from '../services/api';
 
-const ChatRoomPage = () => {
-  const { roomId } = useParams();
-  const [messages, setMessages] = useState([]);
-  const [newMessage, setNewMessage] = useState('');
-  const [loading, setLoading] = useState(true);
-  const [isTyping, setIsTyping] = useState(false);
-  const [typingUser, setTypingUser] = useState(null);
-  const messagesEndRef = useRef(null);
-  const { t } = useTranslation();
+const useUnreadCount = () => {
+  const [unreadCount, setUnreadCount] = useState(0);
 
   useEffect(() => {
-    const fetchMessages = async () => {
+    const fetchUnreadCount = async () => {
       try {
-        const response = await api.get(`/chat/rooms/${roomId}/messages`);
-        setMessages(response.data);
-        scrollToBottom();
+        const response = await api.get('/chat/unread-count');
+        setUnreadCount(response.data.count);
       } catch (err) {
-        message.error(t('load_messages_failed'));
-      } finally {
-        setLoading(false);
+        console.error('Failed to fetch unread count:', err);
       }
     };
 
-    fetchMessages();
+    fetchUnreadCount();
 
-    // Socket.io setup
-    socket.emit('joinRoom', roomId);
-    socket.on('newMessage', handleNewMessage);
-    socket.on('userTyping', handleUserTyping);
+    socket.on('newMessage', () => {
+      setUnreadCount(prev => prev + 1);
+    });
+
+    socket.on('markAsRead', ({ roomId }) => {
+      setUnreadCount(prev => prev - 1);
+    });
 
     return () => {
-      socket.emit('leaveRoom', roomId);
-      socket.off('newMessage', handleNewMessage);
-      socket.off('userTyping', handleUserTyping);
+      socket.off('newMessage');
+      socket.off('markAsRead');
     };
-  }, [roomId]);
-
-  const handleNewMessage = (message) => {
-    setMessages(prev => [...prev, message]);
-    scrollToBottom();
-  };
-
-  const handleUserTyping = ({ userId, isTyping, userName }) => {
-    setIsTyping(isTyping);
-    setTypingUser(isTyping ? userName : null);
-  };
-
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  };
-
-  const sendMessage = async () => {
-    if (!newMessage.trim()) return;
-
-    try {
-      const message = {
-        roomId,
-        text: newMessage
-      };
-
-      const response = await api.post('/chat/messages', message);
-      socket.emit('sendMessage', response.data);
-      setNewMessage('');
-    } catch (err) {
-      message.error(t('send_message_failed'));
-    }
-  };
-
-  const handleKeyPress = (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      sendMessage();
-    } else {
-      socket.emit('typing', { roomId, isTyping: true });
-      setTimeout(() => {
-        socket.emit('typing', { roomId, isTyping: false });
-      }, 2000);
-    }
-  };
-
-  return (
-    <div className="chat-room-page">
-      <div className="chat-messages">
-        {loading ? (
-          <div className="loading-messages">{t('loading')}...</div>
-        ) : (
-          <>
-            <MessageList messages={messages} />
-            <div ref={messagesEndRef} />
-          </>
-        )}
-      </div>
-
-      <div className="chat-input-area">
-        <TypingIndicator isTyping={isTyping} userName={typingUser} />
-        <div className="message-input-container">
-          <Input.TextArea
-            value={newMessage}
-            onChange={(e) => setNewMessage(e.target.value)}
-            onKeyPress={handleKeyPress}
-            placeholder={t('type_message')}
-            autoSize={{ minRows: 1, maxRows: 4 }}
-          />
-          <Button
-            type="primary"
-            icon={<SendOutlined />}
-            onClick={sendMessage}
-            disabled={!newMessage.trim()}
-          />
-        </div>
-      </div>
-    </div>
-  );
-};
-
-export default ChatRoomPage;
-```
-
-## 3. Friends Pages
-
-### client/src/pages/Friends/FriendListPage.jsx
-```javascript
-import { useState, useEffect } from 'react';
-import { List, Avatar, Button, Input, Badge } from 'antd';
-import { SearchOutlined, UserAddOutlined } from '@ant-design/icons';
-import api from '../../services/api';
-import { useTranslation } from 'react-i18next';
-
-const FriendListPage = () => {
-  const [friends, setFriends] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [searchText, setSearchText] = useState('');
-  const { t } = useTranslation();
-
-  useEffect(() => {
-    const fetchFriends = async () => {
-      try {
-        const response = await api.get('/friends');
-        setFriends(response.data);
-      } catch (err) {
-        console.error(err);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchFriends();
   }, []);
 
-  const filteredFriends = friends.filter(friend =>
-    friend.name.toLowerCase().includes(searchText.toLowerCase())
-  );
+  return unreadCount;
+};
 
-  const handleAddFriend = async (userId) => {
-    try {
-      await api.post(`/friends/${userId}`);
-      message.success(t('friend_request_sent'));
-    } catch (err) {
-      message.error(t('friend_request_failed'));
-    }
-  };
+export default useUnreadCount;
+```
 
+## 3. UI Components (client/src/components/ui/)
+
+### LoadingSpinner.jsx
+```javascript
+import { Spin } from 'antd';
+import { LoadingOutlined } from '@ant-design/icons';
+
+const LoadingSpinner = ({ size = 24 }) => {
   return (
-    <div className="friend-list-page">
-      <div className="friend-list-header">
-        <h1>{t('friends')}</h1>
-        <Input
-          placeholder={t('search_friends')}
-          prefix={<SearchOutlined />}
-          value={searchText}
-          onChange={(e) => setSearchText(e.target.value)}
-          allowClear
-        />
-      </div>
-
-      <List
-        loading={loading}
-        dataSource={filteredFriends}
-        renderItem={(friend) => (
-          <List.Item
-            className="friend-item"
-            actions={[
-              <Button 
-                type="primary" 
-                icon={<UserAddOutlined />}
-                onClick={() => handleAddFriend(friend._id)}
-              >
-                {t('add_friend')}
-              </Button>
-            ]}
-          >
-            <List.Item.Meta
-              avatar={
-                <Badge dot={friend.isOnline}>
-                  <Avatar src={friend.profilePicture} />
-                </Badge>
-              }
-              title={friend.name}
-              description={friend.isOnline ? t('online') : t('last_seen', { time: friend.lastActive })}
-            />
-          </List.Item>
-        )}
-      />
+    <div className="loading-spinner">
+      <Spin indicator={<LoadingOutlined style={{ fontSize: size }} spin />} />
     </div>
   );
 };
 
-export default FriendListPage;
+export default LoadingSpinner;
 ```
 
-### client/src/pages/Friends/FriendRequestsPage.jsx
+### ResponsiveDrawer.jsx
 ```javascript
 import { useState, useEffect } from 'react';
-import { List, Avatar, Button, message } from 'antd';
-import { CheckOutlined, CloseOutlined } from '@ant-design/icons';
-import api from '../../services/api';
-import { useTranslation } from 'react-i18next';
+import { Drawer, Button } from 'antd';
+import { MenuOutlined } from '@ant-design/icons';
 
-const FriendRequestsPage = () => {
-  const [requests, setRequests] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const { t } = useTranslation();
+const ResponsiveDrawer = ({ children }) => {
+  const [visible, setVisible] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
 
   useEffect(() => {
-    const fetchRequests = async () => {
-      try {
-        const response = await api.get('/friends/requests');
-        setRequests(response.data);
-      } catch (err) {
-        console.error(err);
-      } finally {
-        setLoading(false);
-      }
+    const checkScreenSize = () => {
+      setIsMobile(window.innerWidth < 768);
     };
 
-    fetchRequests();
+    checkScreenSize();
+    window.addEventListener('resize', checkScreenSize);
+    
+    return () => window.removeEventListener('resize', checkScreenSize);
   }, []);
 
-  const handleResponse = async (requestId, isAccepted) => {
-    try {
-      await api.patch(`/friends/requests/${requestId}`, { action: isAccepted ? 'accept' : 'reject' });
-      setRequests(prev => prev.filter(req => req._id !== requestId));
-      message.success(isAccepted ? t('friend_added') : t('request_rejected'));
-    } catch (err) {
-      message.error(t('request_process_failed'));
-    }
-  };
-
   return (
-    <div className="friend-requests-page">
-      <h1>{t('friend_requests')}</h1>
-      
-      <List
-        loading={loading}
-        dataSource={requests}
-        renderItem={(request) => (
-          <List.Item
-            className="request-item"
-            actions={[
-              <Button 
-                type="primary" 
-                icon={<CheckOutlined />}
-                onClick={() => handleResponse(request._id, true)}
-              >
-                {t('accept')}
-              </Button>,
-              <Button 
-                danger 
-                icon={<CloseOutlined />}
-                onClick={() => handleResponse(request._id, false)}
-              >
-                {t('reject')}
-              </Button>
-            ]}
-          >
-            <List.Item.Meta
-              avatar={<Avatar src={request.from.profilePicture} />}
-              title={request.from.name}
-              description={t('sent_request')}
-            />
-          </List.Item>
-        )}
-      />
-    </div>
-  );
-};
-
-export default FriendRequestsPage;
-```
-
-## 4. Profile Pages
-
-### client/src/pages/Profile/UserProfilePage.jsx
-```javascript
-import { useState, useEffect } from 'react';
-import { useParams } from 'react-router-dom';
-import { Avatar, Tabs, Button, message } from 'antd';
-import { UserOutlined, EditOutlined, MailOutlined } from '@ant-design/icons';
-import api from '../../services/api';
-import { useTranslation } from 'react-i18next';
-
-const { TabPane } = Tabs;
-
-const UserProfilePage = () => {
-  const { userId } = useParams();
-  const [user, setUser] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [isFriend, setIsFriend] = useState(false);
-  const { t } = useTranslation();
-
-  useEffect(() => {
-    const fetchProfile = async () => {
-      try {
-        const response = await api.get(`/users/${userId}`);
-        setUser(response.data);
-        setIsFriend(response.data.isFriend);
-      } catch (err) {
-        message.error(t('profile_load_failed'));
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchProfile();
-  }, [userId]);
-
-  const handleFriendAction = async () => {
-    try {
-      if (isFriend) {
-        await api.delete(`/friends/${userId}`);
-        message.success(t('friend_removed'));
-      } else {
-        await api.post(`/friends/${userId}`);
-        message.success(t('friend_request_sent'));
-      }
-      setIsFriend(!isFriend);
-    } catch (err) {
-      message.error(t('friend_action_failed'));
-    }
-  };
-
-  if (loading) return <div className="loading-profile">{t('loading')}...</div>;
-  if (!user) return <div className="profile-not-found">{t('profile_not_found')}</div>;
-
-  return (
-    <div className="user-profile-page">
-      <div className="profile-header">
-        <Avatar size={120} src={user.profilePicture} icon={<UserOutlined />} />
-        <h1>{user.name}</h1>
+    <>
+      {isMobile && (
         <Button 
-          type={isFriend ? 'default' : 'primary'}
-          onClick={handleFriendAction}
+          type="text" 
+          icon={<MenuOutlined />} 
+          onClick={() => setVisible(true)}
+          className="drawer-button"
+        />
+      )}
+
+      {isMobile ? (
+        <Drawer
+          placement="left"
+          onClose={() => setVisible(false)}
+          visible={visible}
+          width={250}
         >
-          {isFriend ? t('remove_friend') : t('add_friend')}
-        </Button>
-      </div>
-
-      <Tabs defaultActiveKey="1" className="profile-tabs">
-        <TabPane tab={t('about')} key="1">
-          <div className="profile-section">
-            <h3><MailOutlined /> {t('email')}</h3>
-            <p>{user.email}</p>
-          </div>
-          <div className="profile-section">
-            <h3>{t('bio')}</h3>
-            <p>{user.bio || t('no_bio')}</p>
-          </div>
-        </TabPane>
-
-        <TabPane tab={t('friends')} key="2">
-          <div className="friends-list">
-            {user.friends?.length > 0 ? (
-              user.friends.map(friend => (
-                <div key={friend._id} className="friend-item">
-                  <Avatar src={friend.profilePicture} />
-                  <span>{friend.name}</span>
-                </div>
-              ))
-            ) : (
-              <p>{t('no_friends')}</p>
-            )}
-          </div>
-        </TabPane>
-      </Tabs>
-    </div>
+          {children}
+        </Drawer>
+      ) : (
+        <div className="sidebar">
+          {children}
+        </div>
+      )}
+    </>
   );
 };
 
-export default UserProfilePage;
+export default ResponsiveDrawer;
 ```
 
-### client/src/pages/Profile/EditProfilePage.jsx
-```javascript
-import { useState, useEffect } from 'react';
-import { Form, Input, Button, Upload, message } from 'antd';
-import { UserOutlined, MailOutlined, EditOutlined } from '@ant-design/icons';
-import api from '../../services/api';
-import { useTranslation } from 'react-i18next';
+## 4. Server Models (server/models/)
 
-const EditProfilePage = () => {
-  const [form] = Form.useForm();
-  const [loading, setLoading] = useState(false);
-  const [fileList, setFileList] = useState([]);
-  const { t } = useTranslation();
+### Report.js
+```javascript
+const mongoose = require('mongoose');
+
+const reportSchema = new mongoose.Schema({
+  reporter: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: true
+  },
+  reportedUser: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: true
+  },
+  reportedChat: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'ChatRoom'
+  },
+  reason: {
+    type: String,
+    required: true,
+    enum: ['spam', 'harassment', 'inappropriate', 'other']
+  },
+  description: {
+    type: String,
+    required: true
+  },
+  status: {
+    type: String,
+    enum: ['pending', 'reviewed', 'resolved'],
+    default: 'pending'
+  },
+  actionTaken: {
+    type: String
+  }
+}, { timestamps: true });
+
+module.exports = mongoose.model('Report', reportSchema);
+```
+
+### DeviceToken.js
+```javascript
+const mongoose = require('mongoose');
+
+const deviceTokenSchema = new mongoose.Schema({
+  user: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: true
+  },
+  token: {
+    type: String,
+    required: true,
+    unique: true
+  },
+  platform: {
+    type: String,
+    enum: ['android', 'ios', 'web'],
+    required: true
+  },
+  lastActive: {
+    type: Date,
+    default: Date.now
+  }
+});
+
+module.exports = mongoose.model('DeviceToken', deviceTokenSchema);
+```
+
+## 5. Server Services (server/services/)
+
+### locationService.js
+```javascript
+const User = require('../models/User');
+const { calculateDistance } = require('../utils/geoUtils');
+
+exports.updateUserLocation = async (userId, coordinates) => {
+  await User.findByIdAndUpdate(userId, {
+    location: {
+      type: 'Point',
+      coordinates
+    },
+    lastActive: new Date()
+  });
+};
+
+exports.findNearbyUsers = async (latitude, longitude, radius, excludeUserId) => {
+  const users = await User.find({
+    location: {
+      $near: {
+        $geometry: {
+          type: "Point",
+          coordinates: [longitude, latitude]
+        },
+        $maxDistance: radius * 1000
+      }
+    },
+    _id: { $ne: excludeUserId }
+  }).select('name profilePicture location');
+
+  return users.map(user => ({
+    ...user.toObject(),
+    distance: calculateDistance(
+      latitude,
+      longitude,
+      user.location.coordinates[1],
+      user.location.coordinates[0]
+    )
+  }));
+};
+```
+
+### notificationService.js
+```javascript
+const Notification = require('../models/Notification');
+const pushNotification = require('./pushNotification');
+const socketService = require('./socketService');
+
+exports.createNotification = async (userId, type, content, relatedData = {}) => {
+  const notification = await Notification.create({
+    user: userId,
+    type,
+    content,
+    ...relatedData
+  });
+
+  // Send real-time notification via socket
+  const io = socketService.getIO();
+  io.to(userId.toString()).emit('newNotification', notification);
+
+  // Send push notification
+  await pushNotification.send(userId, {
+    title: getNotificationTitle(type),
+    body: content
+  });
+
+  return notification;
+};
+
+function getNotificationTitle(type) {
+  const titles = {
+    message: 'New Message',
+    friendRequest: 'Friend Request',
+    friendAccept: 'Friend Request Accepted'
+  };
+  return titles[type] || 'New Notification';
+}
+```
+
+## 6. Client Utils (client/src/utils/)
+
+### chatUtils.js
+```javascript
+export const formatMessageTime = (timestamp) => {
+  const date = new Date(timestamp);
+  const now = new Date();
+  
+  if (date.toDateString() === now.toDateString()) {
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  } else if (date.getFullYear() === now.getFullYear()) {
+    return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+  } else {
+    return date.toLocaleDateString([], { year: 'numeric', month: 'short', day: 'numeric' });
+  }
+};
+
+export const groupMessagesByDate = (messages) => {
+  const grouped = {};
+  
+  messages.forEach(message => {
+    const date = new Date(message.createdAt).toDateString();
+    if (!grouped[date]) {
+      grouped[date] = [];
+    }
+    grouped[date].push(message);
+  });
+
+  return grouped;
+};
+```
+
+### fileUtils.js
+```javascript
+export const validateFile = (file, allowedTypes, maxSizeMB) => {
+  const fileType = file.type.split('/')[0];
+  const isValidType = allowedTypes.includes(fileType);
+  const isValidSize = file.size <= maxSizeMB * 1024 * 1024;
+
+  return {
+    isValid: isValidType && isValidSize,
+    errors: [
+      !isValidType && `File type must be: ${allowedTypes.join(', ')}`,
+      !isValidSize && `File size must be under ${maxSizeMB}MB`
+    ].filter(Boolean)
+  };
+};
+
+export const readFileAsDataURL = (file) => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+};
+```
+
+## 7. Server Controllers (server/controllers/)
+
+### adminController.js
+```javascript
+const User = require('../models/User');
+const Report = require('../models/Report');
+
+exports.banUser = async (req, res) => {
+  try {
+    const user = await User.findByIdAndUpdate(
+      req.params.userId,
+      { isBanned: true },
+      { new: true }
+    );
+
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // Update related reports
+    await Report.updateMany(
+      { reportedUser: user._id, status: 'pending' },
+      { status: 'resolved', actionTaken: 'User banned' }
+    );
+
+    res.json({ message: 'User banned successfully' });
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+};
+
+exports.getPlatformStats = async (req, res) => {
+  try {
+    const [userCount, activeUserCount, bannedUserCount] = await Promise.all([
+      User.countDocuments(),
+      User.countDocuments({ lastActive: { $gt: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) }),
+      User.countDocuments({ isBanned: true })
+    ]);
+
+    res.json({
+      userCount,
+      activeUserCount,
+      bannedUserCount
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+};
+```
+
+### deviceController.js
+```javascript
+const DeviceToken = require('../models/DeviceToken');
+
+exports.registerDevice = async (req, res) => {
+  try {
+    const { token, platform } = req.body;
+
+    // Check if token already exists
+    const existingToken = await DeviceToken.findOne({ token });
+    if (existingToken) {
+      return res.json({ message: 'Device already registered' });
+    }
+
+    // Create new device token
+    await DeviceToken.create({
+      user: req.user._id,
+      token,
+      platform
+    });
+
+    res.json({ message: 'Device registered successfully' });
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+};
+
+exports.unregisterDevice = async (req, res) => {
+  try {
+    await DeviceToken.findOneAndDelete({
+      user: req.user._id,
+      token: req.body.token
+    });
+
+    res.json({ message: 'Device unregistered successfully' });
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+};
+```
+
+## 8. Client Contexts (client/src/contexts/)
+
+### ChatContext.jsx
+```javascript
+import { createContext, useState, useEffect } from 'react';
+import socket from '../services/socketService';
+
+export const ChatContext = createContext();
+
+export const ChatProvider = ({ children }) => {
+  const [activeRooms, setActiveRooms] = useState([]);
+  const [unreadCounts, setUnreadCounts] = useState({});
+  const [typingUsers, setTypingUsers] = useState({});
 
   useEffect(() => {
-    const fetchProfile = async () => {
+    socket.on('roomListUpdate', (rooms) => {
+      setActiveRooms(rooms);
+    });
+
+    socket.on('unreadCountUpdate', ({ roomId, count }) => {
+      setUnreadCounts(prev => ({ ...prev, [roomId]: count }));
+    });
+
+    socket.on('userTyping', ({ roomId, userId, isTyping }) => {
+      setTypingUsers(prev => {
+        const roomTyping = prev[roomId] || [];
+        return {
+          ...prev,
+          [roomId]: isTyping 
+            ? [...roomTyping.filter(id => id !== userId), userId]
+            : roomTyping.filter(id => id !== userId)
+        };
+      });
+    });
+
+    return () => {
+      socket.off('roomListUpdate');
+      socket.off('unreadCountUpdate');
+      socket.off('userTyping');
+    };
+  }, []);
+
+  const value = {
+    activeRooms,
+    unreadCounts,
+    typingUsers,
+    joinRoom: (roomId) => socket.emit('joinRoom', roomId),
+    leaveRoom: (roomId) => socket.emit('leaveRoom', roomId),
+    markAsRead: (roomId) => socket.emit('markAsRead', roomId)
+  };
+
+  return (
+    <ChatContext.Provider value={value}>
+      {children}
+    </ChatContext.Provider>
+  );
+};
+```
+
+### UserContext.jsx
+```javascript
+import { createContext, useState, useEffect } from 'react';
+import api from '../services/api';
+
+export const UserContext = createContext();
+
+export const UserProvider = ({ children }) => {
+  const [currentUser, setCurrentUser] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchCurrentUser = async () => {
       try {
         const response = await api.get('/users/me');
-        form.setFieldsValue(response.data);
-        if (response.data.profilePicture) {
-          setFileList([{
-            uid: '-1',
-            name: 'profile.jpg',
-            status: 'done',
-            url: response.data.profilePicture
-          }]);
-        }
+        setCurrentUser(response.data);
       } catch (err) {
-        message.error(t('profile_load_failed'));
+        console.error('Failed to fetch user:', err);
+      } finally {
+        setLoading(false);
       }
     };
 
-    fetchProfile();
+    fetchCurrentUser();
   }, []);
 
-  const beforeUpload = (file) => {
-    const isJpgOrPng = file.type === 'image/jpeg' || file.type === 'image/png';
-    if (!isJpgOrPng) {
-      message.error(t('upload_jpg_png_only'));
-    }
-    const isLt2M = file.size / 1024 / 1024 < 2;
-    if (!isLt2M) {
-      message.error(t('image_too_large'));
-    }
-    return isJpgOrPng && isLt2M;
+  const updateUser = (updates) => {
+    setCurrentUser(prev => ({ ...prev, ...updates }));
   };
 
-  const handleUploadChange = ({ fileList }) => setFileList(file
-### လိုအပ်နိုင်သော အဆုံးသတ်အလုပ်များ
+  const value = {
+    currentUser,
+    loading,
+    updateUser,
+    refetchUser: async () => {
+      const response = await api.get('/users/me');
+      setCurrentUser(response.data);
+    }
+  };
 
-1. **Testing Setup**
-   - Jest configuration များ
-   - Mock services များ
-   - End-to-end test cases
+  return (
+    <UserContext.Provider value={value}>
+      {children}
+    </UserContext.Provider>
+  );
+};
+```
 
-2. **CI/CD Pipeline**
-   - GitHub Actions workflow file
-   - Deployment scripts
+## 9. Server Routes (server/routes/)
 
-3. **Performance Optimization**
-   - Database indexing
-   - Query optimization
-   - Caching strategies
+### analyticsRoutes.js
+```javascript
+const express = require('express');
+const router = express.Router();
+const analyticsController = require('../controllers/analyticsController');
+const authController = require('../controllers/authController');
 
-4. **Security Hardening**
-   - CSP headers
-   - Rate limiting rules
-   - Input sanitization
+router.use(authController.protect, authController.restrictTo('admin'));
 
-5. **Monitoring**
-   - Health check endpoints
-   - Performance metrics
-   - Error tracking
+router.get('/stats', analyticsController.getPlatformStats);
+router.get('/user-activity', analyticsController.getUserActivity);
+router.get('/message-trends', analyticsController.getMessageTrends);
 
-ဤအပိုင်းများသည် သင့်အား project ကို production-ready အဆင့်သို့ ရောက်ရှိစေရန် ကူညီပေးပါလိမ့်မည်။ နောက်ဆုံးအဆင့်အနေဖြင့် အောက်ပါတို့ကို စစ်ဆေးပါ:
+module.exports = router;
+```
 
-1. အားလုံးသော environment variables များ စနစ်တကျ configure လုပ်ပါ
-2. Docker နှင့် deployment scripts များ test လုပ်ပါ
-3. API documentation ပြည့်စုံစွာ ရေးသားပါ
-4. Error handling နှင့် logging စနစ် ပြည့်စုံပါစေ
-5. Performance testing ပြုလုပ်ပါ
+### uploadRoutes.js
+```javascript
+const express = require('express');
+const router = express.Router();
+const uploadController = require('../controllers/uploadController');
+const authController = require('../controllers/authController');
+const { uploadUserPhoto, resizeUserPhoto } = require('../services/fileUpload');
 
-လိုအပ်ပါက နောက်ထပ် အသေးစိတ်ရှင်းလင်းချက်များအတွက် ဆက်လက်မေးမြန်းနိုင်ပါသည်။
+router.use(authController.protect);
+
+router.post('/profile-photo', 
+  uploadUserPhoto,
+  resizeUserPhoto,
+  uploadController.uploadProfilePhoto
+);
+
+router.post('/chat-media', 
+  uploadController.uploadChatMedia
+);
+
+module.exports = router;
+```
+
+## 10. Client Services (client/src/services/)
+
+### friendService.js
+```javascript
+import api from './api';
+
+export const getFriends = async () => {
+  const response = await api.get('/friends');
+  return response.data;
+};
+
+export const getFriendRequests = async () => {
+  const response = await api.get('/friends/requests');
+  return response.data;
+};
+
+export const sendFriendRequest = async (userId) => {
+  const response = await api.post(`/friends/${userId}`);
+  return response.data;
+};
+
+export const respondToRequest = async (requestId, accept) => {
+  const response = await api.patch(`/friends/requests/${requestId}`, {
+    action: accept ? 'accept' : 'reject'
+  });
+  return response.data;
+};
+
+export const removeFriend = async (userId) => {
+  const response = await api.delete(`/friends/${userId}`);
+  return response.data;
+};
+```
+
+### locationService.js
+```javascript
+import api from './api';
+
+export const updateLocation = async (latitude, longitude) => {
+  const response = await api.patch('/users/location', {
+    latitude,
+    longitude
+  });
+  return response.data;
+};
+
+export const getNearbyUsers = async (latitude, longitude, radius) => {
+  const response = await api.get(
+    `/users/nearby?lat=${latitude}&lng=${longitude}&radius=${radius}`
+  );
+  return response.data;
+};
+```
