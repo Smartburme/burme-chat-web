@@ -43,39 +43,97 @@ const EditProfilePage = () => {
     return isJpgOrPng && isLt2M;
   };
 
-  const handleUploadChange = ({ fileList }) => setFileList(file
-### လိုအပ်နိုင်သော အဆုံးသတ်အလုပ်များ
+  const handleUploadChange = ({ fileList }) => setFileList(fileList);
 
-1. **Testing Setup**
-   - Jest configuration များ
-   - Mock services များ
-   - End-to-end test cases
+  const onFinish = async (values) => {
+    try {
+      setLoading(true);
+      const formData = new FormData();
+      
+      if (fileList.length > 0 && fileList[0].originFileObj) {
+        formData.append('profilePicture', fileList[0].originFileObj);
+      }
+      
+      Object.keys(values).forEach(key => {
+        if (values[key]) formData.append(key, values[key]);
+      });
 
-2. **CI/CD Pipeline**
-   - GitHub Actions workflow file
-   - Deployment scripts
+      await api.patch('/users/me', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data'
+        }
+      });
+      
+      message.success(t('profile_updated'));
+    } catch (err) {
+      message.error(t('profile_update_failed'));
+    } finally {
+      setLoading(false);
+    }
+  };
 
-3. **Performance Optimization**
-   - Database indexing
-   - Query optimization
-   - Caching strategies
+  return (
+    <div className="edit-profile-page">
+      <h1>{t('edit_profile')}</h1>
+      
+      <Form
+        form={form}
+        onFinish={onFinish}
+        layout="vertical"
+      >
+        <Form.Item
+          name="name"
+          label={t('name')}
+          rules={[{ required: true, message: t('name_required') }]}
+        >
+          <Input prefix={<UserOutlined />} />
+        </Form.Item>
 
-4. **Security Hardening**
-   - CSP headers
-   - Rate limiting rules
-   - Input sanitization
+        <Form.Item
+          name="email"
+          label={t('email')}
+          rules={[
+            { required: true, message: t('email_required') },
+            { type: 'email', message: t('invalid_email') }
+          ]}
+        >
+          <Input prefix={<MailOutlined />} disabled />
+        </Form.Item>
 
-5. **Monitoring**
-   - Health check endpoints
-   - Performance metrics
-   - Error tracking
+        <Form.Item
+          name="bio"
+          label={t('bio')}
+        >
+          <Input.TextArea rows={4} />
+        </Form.Item>
 
-ဤအပိုင်းများသည် သင့်အား project ကို production-ready အဆင့်သို့ ရောက်ရှိစေရန် ကူညီပေးပါလိမ့်မည်။ နောက်ဆုံးအဆင့်အနေဖြင့် အောက်ပါတို့ကို စစ်ဆေးပါ:
+        <Form.Item
+          label={t('profile_picture')}
+        >
+          <Upload
+            listType="picture-card"
+            fileList={fileList}
+            beforeUpload={beforeUpload}
+            onChange={handleUploadChange}
+            maxCount={1}
+          >
+            {fileList.length < 1 && (
+              <div>
+                <EditOutlined />
+                <div style={{ marginTop: 8 }}>{t('upload')}</div>
+              </div>
+            )}
+          </Upload>
+        </Form.Item>
 
-1. အားလုံးသော environment variables များ စနစ်တကျ configure လုပ်ပါ
-2. Docker နှင့် deployment scripts များ test လုပ်ပါ
-3. API documentation ပြည့်စုံစွာ ရေးသားပါ
-4. Error handling နှင့် logging စနစ် ပြည့်စုံပါစေ
-5. Performance testing ပြုလုပ်ပါ
+        <Form.Item>
+          <Button type="primary" htmlType="submit" loading={loading}>
+            {t('save_changes')}
+          </Button>
+        </Form.Item>
+      </Form>
+    </div>
+  );
+};
 
-လိုအပ်ပါက နောက်ထပ် အသေးစိတ်ရှင်းလင်းချက်များအတွက် ဆက်လက်မေးမြန်းနိုင်ပါသည်။
+export default EditProfilePage;
